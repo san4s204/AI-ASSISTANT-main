@@ -5,7 +5,7 @@ from aiogram import F
 import asyncio
 from bot.states import Form
 from keyboards import keyboard_setting_bot, keyboard_sub, state_bot, keyboard_return, keyboard_prompt_controls, keyboard_confirm_delete_source, keyboard_attach_source, keyboard_calendar_menu
-from bot.services.db import update_user_state, get_user_token_and_doc, get_user_doc_id, update_user_token, update_user_document, set_user_calendar_id, get_user_calendar_id, clear_user_calendar_id
+from bot.services.db import update_user_state, get_user_token_and_doc, get_user_doc_id, update_user_token, update_user_document, set_user_calendar_id, get_user_calendar_id, clear_user_calendar_id, get_subscription_until
 from openrouter import run_bot, stop_bot
 from providers.redis_provider import delete_by_pattern
 from deepseek import doc
@@ -35,6 +35,13 @@ async def turn_cb(callback: types.CallbackQuery):
     res = state_bot(callback.from_user.id)
 
     if res == "🤖❌ Бот выключен":
+        res_sub = await get_subscription_until(callback.from_user.id)
+        if not res_sub:
+            await callback.answer(
+                "Подписка не активна. Продлите её через «💰 Оплата».",
+                show_alert=True
+            )
+            return
         await callback.answer(text="Запускаю Вашего бота ✅")
         # не блокируем event loop
         await asyncio.sleep(1)
@@ -81,6 +88,47 @@ async def check_txt(callback: types.CallbackQuery):
             "Не удалось открыть источник. Проверьте доступ (OAuth/шаринг) и корректность ссылки.",
             show_alert=True
         )
+
+
+@router.callback_query(F.data == "change_API")
+async def change_api(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.edit_text(
+        "Пришлите **API-токен вашего Telegram-бота**.\n\n"
+        "Формат обычно такой: `1234567890:AA...`.\n"
+        "Напишите *отмена*, чтобы вернуться.",
+        reply_markup=keyboard_return(),
+        parse_mode="Markdown"
+    )
+    await state.set_state(Form.waiting_for_api)
+
+@router.message(Form.waiting_for_api)
+async def process_api_token(message: types.Message, state: FSMContext):
+    text = (message.text or "").strip()
+
+    # отмена
+    if text.lower() in {"отмена", "cancel"}:
+        await state.clear()
+        await message.answer("Отменено.", reply_markup=keyboard_return())
+        return
+
+    # простая валидация формата телеграм-токена
+    # (9–11 цифр):(35 символов из A-Za-z0-9_-)
+    if not re.fullmatch(r"\d{9,11}:[A-Za-z0-9_-]{35}", text):
+        await message.answer(
+            "Похоже, токен в неверном формате. Проверьте и пришлите ещё раз.\n\n"
+            "Пример: `1234567890:AA...`",
+            reply_markup=keyboard_return(),
+            parse_mode="Markdown"
+        )
+        return
+
+    ok = await update_user_token(message.from_user.id, text)
+    if ok:
+        await message.answer("✅ Токен успешно обновлён!", reply_markup=keyboard_return())
+    else:
+        await message.answer("❌ Запись не найдена или нет активной подписки.", reply_markup=keyboard_return())
+
+    await state.clear()
 
 @router.message(Form.waiting_for_api)
 async def process_api(message: types.Message, state: FSMContext):

@@ -2,7 +2,6 @@ from __future__ import annotations
 from aiogram import Router, types
 from aiogram import F
 from aiogram.filters import Command, CommandStart
-
 from bot.services.db import get_subscription_until
 
 from keyboards import (
@@ -19,7 +18,7 @@ async def start_cmd(message: types.Message):
     if res:
         await message.answer(
             f"Вы уже оплатили подписку! Она активна до {res}",
-            reply_markup=r_keyboard_sub()
+            reply_markup=r_keyboard_sub(message.from_user.id)
         )
         await message.answer("Главное меню:", reply_markup=keyboard_sub(message.from_user.id))
     else:
@@ -59,6 +58,10 @@ async def help_reply(message: types.Message):
         "Если возникли вопросы, напишите нашему менеджеру",
         reply_markup=keyboard_return()
     )
+
+@router.message(F.text.lower().in_(["🧭 главное меню", "главное меню"]))
+async def open_main_menu(message: types.Message):
+    await message.answer("Главное меню:", reply_markup=keyboard_sub(message.from_user.id))
 
 ## Callbacks
 

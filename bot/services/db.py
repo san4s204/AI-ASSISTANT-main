@@ -2,6 +2,7 @@ from __future__ import annotations
 import os
 import datetime
 import aiosqlite
+from typing import Iterable
 
 DB_PATH = os.getenv("DB_PATH", "db.db")
 
@@ -51,6 +52,40 @@ async def set_subscription_active(user_id: int | str, username: str | None = Non
         )
         await conn.commit()
     return end_date
+
+async def find_users_to_expire(now: datetime.datetime) -> list[tuple[int, str | None]]:
+    """
+    Вернёт [(user_id, state_bot)] для всех, у кого подписка истекла,
+    но в БД ещё стоит subscribe='subscribe'.
+    """
+    async with aiosqlite.connect(DB_PATH) as conn:
+        async with conn.execute(
+            """
+            SELECT id, state_bot
+            FROM users
+            WHERE subscribe='subscribe'
+              AND date_end IS NOT NULL
+              AND datetime(date_end) <= ?
+            """,
+            (now.isoformat(),),
+        ) as cur:
+            rows = await cur.fetchall()
+    return [(r[0], r[1]) for r in rows]
+
+
+async def mark_subscriptions_expired(user_ids: Iterable[int | str]) -> int:
+    """Ставит subscribe=NULL для списка пользователей. Возвращает число обновлённых строк."""
+    ids = list(user_ids)
+    if not ids:
+        return 0
+    async with aiosqlite.connect(DB_PATH) as conn:
+        await conn.executemany(
+            "UPDATE users SET subscribe=NULL WHERE id=?",
+            [(uid,) for uid in ids],
+        )
+        await conn.commit()
+        # SQLite не даёт простого rowcount для executemany — посчитаем вручную
+        return len(ids)
 
 async def get_user_token_and_doc(user_id: int | str) -> tuple[str | None, str | None]:
     """Возвращает (bot_token, word_file) или (None, None)."""

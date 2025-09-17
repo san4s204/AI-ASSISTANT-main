@@ -17,15 +17,17 @@ def r_keyboard_unsub():
     return builder.as_markup(resize_keyboard=True)
 
 
-def r_keyboard_sub():
+def r_keyboard_sub(user_id: int = None):
     builder = ReplyKeyboardBuilder()
     builder.add(
-        KeyboardButton(text="🔔 Подключить личный кабинет"),
+        KeyboardButton(text="🧭 Главное меню"),   # ← было: "🔔 Подключить личный кабинет"
+        KeyboardButton(text="🔧 Настройки Бота"),
+        KeyboardButton(text="📝 Просмотр и редактирование промпта"),
         KeyboardButton(text="⏳ Подписка"),
         KeyboardButton(text="📖 Информация"),
         KeyboardButton(text="💬 Помощь"),
     )
-    builder.adjust(1, 1, 2)
+    builder.adjust(1, 1, 2, 2)
     return builder.as_markup(resize_keyboard=True)
 
 

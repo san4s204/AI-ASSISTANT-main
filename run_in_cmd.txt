@@ -1,0 +1,1 @@
+ssh -NT -R 18080:localhost:8080 -o ServerAliveInterval=30 -o ServerAliveCountMax=2 -v root@37.252.19.20
