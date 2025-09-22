@@ -17,6 +17,8 @@ from providers.google_calendar_oauth_provider import (
     list_events_between_oauth,
 )
 from bot.services.db import get_user_calendar_id
+from bot.services.token_wallet import ensure_current_wallet, can_spend, debit, rough_token_estimate
+from bot.services.limits import month_token_allowance
 
 load_dotenv(override=True)
 
@@ -47,16 +49,42 @@ async def _bot_worker(bot_token: str, doc_id: str, owner_id: int) -> None:
 
     @dp.message()
     async def echo_handler(message: types.Message):
+        # 0) Обрабатываем только текст
         text = message.text or ""
+        if not text.strip():
+            # молча игнорируем или ответь подсказкой, если хочешь
+            return
+
+        # Пытаемся показать "печатает..."
         try:
             await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
         except Exception:
             pass
 
-        # 1) Пытаемся распознать запрос к календарю
-        if _looks_calendar(text):
-            uid = owner_id  # важно: используем owner_id из run_bot(...)
-            try:
+        # 1) Гарантируем кошелёк и делаем быстрый предчек
+        try:
+            allowance = await month_token_allowance(owner_id)
+            await ensure_current_wallet(owner_id, allowance)
+        except Exception:
+            logging.exception("ensure_current_wallet failed")
+
+        est_min_cost = rough_token_estimate(text, None)
+        try:
+            can = await can_spend(owner_id, est_min_cost)
+        except Exception:
+            logging.exception("can_spend failed")
+            can = True  # не ломаем UX в случае сбоя учёта
+
+        if not can:
+            await message.answer(
+                "⛔️ Баланс токенов исчерпан. Пополните тариф в «Настройках» или уменьшите запрос."
+            )
+            return
+
+        # 2) Попытка обработать как запрос к Календарю
+        try:
+            if _looks_calendar(text):
+                uid = owner_id
                 cal_id = await get_user_calendar_id(uid) or "primary"
                 tz = await get_user_timezone_oauth(uid)
 
@@ -66,21 +94,48 @@ async def _bot_worker(bot_token: str, doc_id: str, owner_id: int) -> None:
                 if not events:
                     await message.answer(f"Событий {label} не найдено.")
                 else:
-                    await message.answer(f"События {label}:\n\n{_fmt_events(events)}",
-                                        disable_web_page_preview=True)
+                    await message.answer(
+                        f"События {label}:\n\n{_fmt_events(events)}",
+                        disable_web_page_preview=True,
+                    )
                 return
-            except Exception:
-                # мягко сообщаем и продолжаем как обычный LLM-вопрос
-                await message.answer("⚠️ Не удалось обратиться к Календарю. "
-                                    "Проверьте подключение Google и права Calendar.")
+        except Exception:
+            # Мягко сообщаем и продолжаем как обычный LLM-вопрос
+            logging.exception("Calendar branch failed")
+            await message.answer(
+                "⚠️ Не удалось обратиться к Календарю. Проверьте подключение Google и права Calendar."
+            )
 
-        # 2) Обычный ответ модели по Docs/Sheets
+        # 3) Обычный ответ модели (Docs/Sheets/и т.д.)
         try:
             reply = await answer(text, doc_id, owner_id=owner_id)
+            if reply is None or str(reply).strip() == "":
+                reply = "🤖 (пустой ответ)"
         except Exception:
             logging.exception("answer() failed")
-            reply = "⚠️ Ошибка при обращении к модели. Попробуйте позже."
-        await message.answer(reply)
+            await message.answer("⚠️ Ошибка при обращении к модели. Попробуйте позже.")
+            return
+
+        # 4) Списание оценочных токенов (заменим на реальные usage, когда будут)
+        try:
+            est = rough_token_estimate(text, reply)
+            ok = await debit(
+                owner_id,
+                est,
+                reason="llm-child-echo",
+                request_id=str(message.message_id),
+                meta={"bot_chat_id": message.chat.id},
+            )
+            if not ok:
+                # Редкая гонка: предчек прошёл, но лимит исчерпан к моменту списания.
+                await message.answer("ℹ️ Достигнут лимит токенов на месяц.")
+        except Exception:
+            logging.exception("debit failed")
+
+        # 5) Финальный ответ пользователю
+        await message.answer(reply, disable_web_page_preview=True)
+
+
 
     # Сохраняем ссылку на экземпляры, чтобы stop_bot мог корректно их завершить
     _active[bot_token] = {"bot": bot, "dp": dp, "task": asyncio.current_task(), "doc_id": doc_id, "owner_id": owner_id}

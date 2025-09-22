@@ -1,0 +1,10 @@
+ai-assistant-tg.duckdns.org {
+	encode zstd gzip
+	@oauth path /oauth/*
+
+	# Проксируем всё на приложение
+	reverse_proxy app:8080 {
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-Host {host}
+	}
+}

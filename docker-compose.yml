@@ -1,0 +1,58 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        PYTHON_VERSION: "3.11"
+    env_file:
+      - .env
+    environment:
+      TZ: Europe/Berlin
+      OAUTH_PORT: ${OAUTH_PORT:-8080}
+    ports:
+      - "${OAUTH_PORT:-8080}:8080"
+    volumes:
+      - ./db.db:/app/db.db
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sqlite3,sys; sqlite3.connect('db.db').cursor().execute('PRAGMA quick_check'); sys.exit(0)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  caddy:
+      image: caddy:2-alpine
+      restart: unless-stopped
+      ports:
+        - "80:80"
+        - "443:443"
+      volumes:
+        - ./Caddyfile:/etc/caddy/Caddyfile:ro
+        - caddy-data:/data
+        - caddy-config:/config
+      depends_on:
+        - app
+
+volumes:
+  caddy-data:
+  caddy-config:
+
+networks:
+  default:
+    name: ai-bot-net

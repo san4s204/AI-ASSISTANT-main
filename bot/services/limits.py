@@ -50,3 +50,13 @@ async def resolve_plan(user_id: int) -> str:
         return "premium"
     except Exception:
         return "free"
+
+# === Месячные квоты токенов по планам ===
+TOKEN_ALLOWANCE_MAP: Dict[str, int] = {
+    "free":    _env_int("LIMITS_TOKENS_FREE",    400),   # ~малые объемы
+    "premium": _env_int("LIMITS_TOKENS_PREMIUM", 800), # побольше
+}
+
+async def month_token_allowance(user_id: int) -> int:
+    plan = await resolve_plan(user_id)
+    return int(TOKEN_ALLOWANCE_MAP.get(plan, TOKEN_ALLOWANCE_MAP["free"]))

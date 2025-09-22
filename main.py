@@ -3,7 +3,7 @@ import asyncio
 import logging
 from contextlib import suppress
 import signal
-
+import os
 from aiogram import Bot, Dispatcher, Router
 from aiosend import CryptoPay, TESTNET
 
@@ -13,6 +13,12 @@ from bot.web.oauth_app import start_oauth_webserver
 # Необязательно, но полезно: фоновая задача, которая гасит истёкшие подписки
 # Если файла нет — можно временно закомментировать импорт и запуск.
 from bot.services.subscription import subscription_expirer
+from bot.services.token_wallet import ensure_tables
+# ↓↓↓ NEW: импорты для лимитов ↓↓↓
+from middlewares.rate_limit import parse_admins, RateLimitMiddleware
+from providers.redis_provider import get_redis
+from bot.services.limits import RPM_MAP, RPD_MAP, resolve_plan
+# ↑↑↑ NEW ↑↑↑
 
 # === Инициализация ===
 cp = CryptoPay(CRYPTOTOKEN, TESTNET)  # если не используешь здесь — можно удалить
@@ -42,9 +48,20 @@ async def _run():
     """
     oauth_runner = None
     tasks: list[asyncio.Task] = []
-
+    admin_ids = parse_admins(os.getenv("ADMIN_IDS", ""))  # пример: "123,456"
+    limiter = RateLimitMiddleware(
+        redis=get_redis(),
+        rpm_map=RPM_MAP,
+        rpd_map=RPD_MAP,
+        plan_resolver=resolve_plan,
+        admin_ids=admin_ids,
+        metric_prefix="rl-main",
+    )
+    dp.message.middleware(limiter)
     # перехват сигналов (на Windows SIGTERM может быть недоступен — игнорируем)
     stop_event = asyncio.Event()
+
+    
 
     def _stop():
         stop_event.set()
@@ -55,7 +72,14 @@ async def _run():
             loop.add_signal_handler(sig, _stop)
 
     try:
-        # 1) OAuth веб-сервер
+        # 0) Инициализация таблиц кошелька
+        try:
+            await ensure_tables()
+            logging.info("Token wallet tables are ready")
+        except Exception:
+            logging.exception("Failed to ensure token_wallet tables")
+
+        # 2) OAuth веб-сервер
         try:
             oauth_runner = await start_oauth_webserver(bot)
             logging.info("OAuth webserver started")
