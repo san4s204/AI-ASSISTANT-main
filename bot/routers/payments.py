@@ -25,14 +25,14 @@ async def cq_payment(callback: types.CallbackQuery):
             pass
     else:
         await callback.message.edit_text(
-            "Выберите своего ИИ-Агента\nПодробное описание каждого в нашем канале:",
+            "Выберите своего ИИ-Агента",
             reply_markup=keyboard_change_ai()
         )
 
 @router.callback_query(F.data == "ai_premium")
 async def cq_ai_premium(callback: types.CallbackQuery):
     await callback.message.edit_text(
-        "Выберите способ оплаты",
+        "Стоимость подписки:\n\n1 месяц - 599 ₽ (7.2 USDT)",
         reply_markup=keyboard_payment_premium()
     )
 
