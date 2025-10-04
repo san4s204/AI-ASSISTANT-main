@@ -10,4 +10,15 @@ bot/routers/__pycache__
 bot/services/__pycache__
 bot/web/__pycache__
 providers/__pycache__
-test.py
+test.pydb.db
+.env
+data/
+backups/
+__pycache__/
+*.log
+db.db
+.env
+data/
+backups/
+__pycache__/
+*.log
