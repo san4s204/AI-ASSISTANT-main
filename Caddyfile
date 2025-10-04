@@ -1,10 +1,26 @@
 ai-assistant-tg.duckdns.org {
 	encode zstd gzip
-	@oauth path /oauth/*
 
-	# Проксируем всё на приложение
-	reverse_proxy app:8080 {
-		header_up X-Forwarded-Proto {scheme}
-		header_up X-Forwarded-Host {host}
+	# Статика: главная, privacy и файл верификации
+	handle_path /privacy* {
+		root * /srv/site
+		file_server
+	}
+	handle_path /google* {
+		root * /srv/site
+		file_server
+	}
+	# Главная страница (если хочешь, чтобы '/' была статикой):
+	handle_path / {
+		root * /srv/site
+		file_server
+	}
+
+	# Всё остальное — в приложение (OAuth, API)
+	handle {
+		reverse_proxy app:8080 {
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Forwarded-Host {host}
+		}
 	}
 }

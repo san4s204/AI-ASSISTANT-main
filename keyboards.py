@@ -5,6 +5,7 @@ from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
 from config import MANAGER_URL
 
 # ---------------- Reply keyboards ----------------
+CB_CANCEL = "pay_cancel"
 
 def r_keyboard_unsub():
     builder = ReplyKeyboardBuilder()
@@ -96,7 +97,7 @@ def keyboard_crypto_bot(url: str):
     builder.add(
         InlineKeyboardButton(text="💸 Оплатить", url=url),
         InlineKeyboardButton(text="❔ Проблема с оплатой?", url=MANAGER_URL),
-        InlineKeyboardButton(text="✖️ Отменить оплату", callback_data="payment"),
+        InlineKeyboardButton(text="✖️ Отменить оплату", callback_data=CB_CANCEL),
     )
     builder.adjust(2, 1)
     return builder.as_markup()
@@ -107,7 +108,7 @@ def keyboard_yookassa(url: str):
     builder.add(
         InlineKeyboardButton(text="💳 Оплатить", url=url),
         InlineKeyboardButton(text="❔ Проблема с оплатой?", url=MANAGER_URL),
-        InlineKeyboardButton(text="✖️ Отменить оплату", callback_data="return"),
+        InlineKeyboardButton(text="✖️ Отменить оплату", callback_data=CB_CANCEL),
     )
     builder.adjust(2, 1)
     return builder.as_markup()

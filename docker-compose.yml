@@ -50,6 +50,7 @@ services:
         - app
 
 volumes:
+
   caddy-data:
   caddy-config:
 

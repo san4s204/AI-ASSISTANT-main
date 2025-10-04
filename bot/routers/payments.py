@@ -1,16 +1,19 @@
 from __future__ import annotations
 from aiogram import Router, types
 from aiogram.fsm.context import FSMContext
-from bot.services.payments import start_yookassa, start_cryptobot
+from bot.services.payments import start_yookassa, start_cryptobot, _cancel_checker, _safe_edit_text
 from aiogram import F
-
 from keyboards import (
     keyboard_payment_premium,
     keyboard_sub, keyboard_unsub, keyboard_change_ai,
-    r_keyboard_sub,
+    r_keyboard_sub, keyboard_return
 )
 
 from bot.services.db import get_subscription_until
+
+CB_CANCEL = "pay_cancel"
+CB_TO_YK = "pay_switch_yk"
+CB_TO_CB = "pay_switch_cb"
 
 router = Router(name="payments")
 
@@ -25,7 +28,7 @@ async def cq_payment(callback: types.CallbackQuery):
             pass
     else:
         await callback.message.edit_text(
-            "Выберите своего ИИ-Агента",
+            "Стоимость подписки:\n\n1 месяц - 599 ₽ (7.2 USDT)",
             reply_markup=keyboard_change_ai()
         )
 
@@ -56,3 +59,14 @@ async def subscribe(callback: types.CallbackQuery):
         await callback.message.edit_text("Главное меню:", reply_markup=keyboard_sub(callback.from_user.id))
     else:
         await callback.message.edit_text("Главное меню:", reply_markup=keyboard_unsub())
+
+@router.callback_query(F.data == CB_CANCEL)
+async def pay_cancel(callback: types.CallbackQuery, state: FSMContext):
+    await _cancel_checker(callback.from_user.id)  # погасим фоновые проверяльщики
+    await state.clear()
+    await _safe_edit_text(
+        callback.message,
+        "Оплата отменена. Выберите способ оплаты заново:",
+        reply_markup=keyboard_return()
+    )
+    await callback.answer("Отменено")

@@ -1,1 +1,3 @@
 ssh -NT -R 18080:localhost:8080 -o ServerAliveInterval=30 -o ServerAliveCountMax=2 -v root@37.252.19.20
+ssh -N -L 19001:127.0.0.1:9001 root@37.252.19.20
+pass: v9ouhScT1Ax+_.
