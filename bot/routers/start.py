@@ -17,18 +17,26 @@ async def start_cmd(message: types.Message):
     res = await get_subscription_until(message.from_user.id)
     if res:
         await message.answer(
-            f"Вы уже оплатили подписку! Она активна до {res}",
-            reply_markup=r_keyboard_sub(message.from_user.id)
-        )
-        await message.answer("Главное меню:", reply_markup=keyboard_sub(message.from_user.id))
-    else:
+            text=f"Вы уже оплатили подписку! Она активна до {res}",
+            reply_markup=r_keyboard_sub(message.from_user.id),
+            disable_web_page_preview=True,)
         await message.answer(
-            "Привет, давай коротко расскажу о себе: \n ",
-            "Через данный бот Вы можете за 5 минут подключить ИИ к своему Telegram-боту.\n",
-            "Без программирования. Получите умного ассистента для поддержки клиентов, консультаций или развлечения.",
-            reply_markup=r_keyboard_unsub()
-        )
-        await message.answer("Главное меню", reply_markup=keyboard_unsub())
+            text="Главное меню:",
+            reply_markup=keyboard_sub(message.from_user.id), )
+        return
+
+    intro = (
+        "Привет, давай коротко расскажу о себе:\n\n"
+        "Через данный бот вы можете за 5 минут подключить ИИ к своему Telegram-боту.\n"
+        "Без программирования. Получите умного ассистента для поддержки клиентов, консультаций или развлечения."
+    )
+    await message.answer(
+        text=intro,
+        reply_markup=r_keyboard_unsub(),
+        disable_web_page_preview=True, )
+    await message.answer(
+        text="Главное меню",
+        reply_markup=keyboard_unsub(),)
 
 @router.message(Command("help"))
 async def help_cmd(message: types.Message):
