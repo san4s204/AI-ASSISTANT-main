@@ -1,6 +1,7 @@
 from __future__ import annotations
 import os
 import datetime
+from datetime import datetime as dti
 import aiosqlite
 from typing import Iterable
 
@@ -176,3 +177,26 @@ async def clear_user_calendar_id(user_id: int | str) -> bool:
         )
         await conn.commit()
         return cur.rowcount > 0
+    
+async def _ensure_terms_table(conn):
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS user_terms (
+            user_id INTEGER PRIMARY KEY,
+            accepted_at TEXT
+        )
+    """)
+
+async def has_accepted_terms(user_id: int) -> bool:
+    async with aiosqlite.connect("db.db") as conn:
+        await _ensure_terms_table(conn)
+        async with conn.execute("SELECT 1 FROM user_terms WHERE user_id=?", (user_id,)) as cur:
+            return (await cur.fetchone()) is not None
+
+async def set_terms_accepted(user_id: int) -> None:
+    async with aiosqlite.connect("db.db") as conn:
+        await _ensure_terms_table(conn)
+        await conn.execute(
+            "INSERT OR REPLACE INTO user_terms(user_id, accepted_at) VALUES(?, ?)",
+            (user_id, dti.utcnow().isoformat())
+        )
+        await conn.commit()

@@ -1,6 +1,6 @@
 from __future__ import annotations
 import sqlite3
-from aiogram.types import KeyboardButton, InlineKeyboardButton
+from aiogram.types import KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
 from config import MANAGER_URL
 
@@ -43,7 +43,7 @@ def keyboard_sub(user_id: int):
     builder.add(
         InlineKeyboardButton(text=state_bot(user_id), callback_data="turn_on_off"),
         InlineKeyboardButton(text="🔧 Настройка Бота ", callback_data="setting_bot"),
-        InlineKeyboardButton(text="📝 Просмотр и редактирование промпта", callback_data="check_txt"),
+        InlineKeyboardButton(text="📝 Просмотр и редактирование промпта", callback_data="prompt"),
         InlineKeyboardButton(text="⏳ Подписка", callback_data="check_sub"),
         InlineKeyboardButton(text="📖 Информация", callback_data="info"),
         InlineKeyboardButton(text="💬 Помощь", callback_data="help"),
@@ -209,6 +209,12 @@ def keyboard_confirm_delete_source():
     """
     b = InlineKeyboardBuilder()
     b.add(InlineKeyboardButton(text="✅ Да, удалить", callback_data="confirm_delete_source"))
-    b.add(InlineKeyboardButton(text="↩️ Отмена", callback_data="check_txt"))
+    b.add(InlineKeyboardButton(text="↩️ Отмена", callback_data="prompt"))
     b.adjust(1, 1)
     return b.as_markup()
+
+def keyboard_terms():
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="Принимаю ✅", callback_data="terms_accept"),
+        InlineKeyboardButton(text="Не принимаю ❌", callback_data="terms_decline"),
+    ]])

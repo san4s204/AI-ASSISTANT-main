@@ -57,8 +57,8 @@ async def turn_cb(callback: types.CallbackQuery):
         token, _ = await get_user_token_and_doc(callback.from_user.id)
         await stop_bot(str(token))
 
-@router.callback_query(F.data == "check_txt")
-async def check_txt(callback: types.CallbackQuery):
+@router.callback_query(F.data == "prompt")
+async def prompt(callback: types.CallbackQuery):
     link = await get_user_doc_id(callback.from_user.id)
     if not link:
         await callback.message.edit_text(
@@ -302,6 +302,6 @@ async def cal_unlink(callback: types.CallbackQuery):
     if ok:
         await callback.answer("✅ Календарь отвязан.", show_alert=False)
         # Перерисуем текущий экран без кнопки «Отвязать календарь»
-        await check_txt(callback)
+        await prompt(callback)
     else:
         await callback.answer("Нечего отвязывать — календарь не привязан.", show_alert=True)

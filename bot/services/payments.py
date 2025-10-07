@@ -5,7 +5,7 @@ import contextlib
 from aiogram import Bot
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-
+import os
 from config import PRICE_premium, AMOUNT_premium, ASSET, MANAGER_GROUP
 from keyboards import (
     keyboard_yookassa, keyboard_crypto_bot,
@@ -18,6 +18,8 @@ from bot.services.db import get_subscription_until, set_subscription_active
 CHECKERS: dict[int, asyncio.Task] = {}
 MAX_ATTEMPTS = 200            # попыток проверки статуса
 SLEEP_SECONDS = 3             # пауза между проверками, сек
+
+
 
 async def _cancel_checker(chatid: int) -> None:
     t = CHECKERS.pop(chatid, None)
