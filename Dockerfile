@@ -12,7 +12,7 @@ TZ=Europe/Berlin
 # Системные зависимости
 RUN apt-get update \
 && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-build-essential curl tzdata git sqlite3 \
+build-essential curl tzdata git sqlite3 ffmpeg \
 && rm -rf /var/lib/apt/lists/*
 
 

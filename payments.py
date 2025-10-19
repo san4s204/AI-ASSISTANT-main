@@ -1,4 +1,3 @@
-import yookassa
 from yookassa import Payment
 import uuid
 from config import ACCOUNT_ID, SECRET_KEY, CRYPTOTOKEN
