@@ -387,7 +387,7 @@ async def _render_prompt_preview(to_msg: types.Message | types.CallbackQuery, us
 
 @router.message(Command("settings"))
 async def settings_cmd(message: types.Message):
-    await _render_settings(message)
+    await _render_settings(message,message.from_user.id)
 
 @router.message(Command("prompt"))
 async def prompt_cmd(message: types.Message):
