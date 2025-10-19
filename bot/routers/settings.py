@@ -4,7 +4,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram import F
 import asyncio
 from bot.states import Form
-from keyboards import keyboard_setting_bot, keyboard_sub, state_bot, keyboard_return, keyboard_prompt_controls, keyboard_confirm_delete_source, keyboard_attach_source, keyboard_calendar_menu
+from keyboards import keyboard_setting_bot, keyboard_sub, state_bot, keyboard_return, keyboard_prompt_controls, keyboard_confirm_delete_source, keyboard_attach_source, keyboard_calendar_menu, keyboard_unsub
 from bot.services.db import update_user_state, get_user_token_and_doc, get_user_doc_id, update_user_token, update_user_document, set_user_calendar_id, get_user_calendar_id, clear_user_calendar_id, get_subscription_until
 from openrouter import run_bot, stop_bot
 from providers.redis_provider import delete_by_pattern
@@ -12,13 +12,13 @@ from deepseek import doc
 from providers.google_calendar_oauth_provider import list_calendars_oauth
 import re
 from config import BASE_URL
-from bot.services.google_oauth import delete_refresh_token
+from bot.services.google_oauth import delete_refresh_token, has_google_oauth
 from aiogram.types import  InlineKeyboardButton
 from aiogram.utils.keyboard import  InlineKeyboardBuilder
 
 _DOC_RE = re.compile(r"/document/d/([a-zA-Z0-9_-]+)")
 _SHEET_RE = re.compile(r"/spreadsheets/d/([a-zA-Z0-9_-]+)")
-
+REQUIRE_GOOGLE = 1
 
 router = Router(name="settings")
 
@@ -32,30 +32,75 @@ async def setting_bot_cb(callback: types.CallbackQuery):
 @router.callback_query(F.data == "turn_on_off")
 async def turn_cb(callback: types.CallbackQuery):
     # Что сейчас показывает кнопка в меню (текущее состояние)
-    res = state_bot(callback.from_user.id)
-
-    if res == "🤖❌ Бот выключен":
-        res_sub = await get_subscription_until(callback.from_user.id)
-        if not res_sub:
-            await callback.answer(
-                "Подписка не активна. Продлите её через «💰 Оплата».",
-                show_alert=True
-            )
+    uid = callback.from_user.id
+    current = state_bot(uid)
+    url = f"{BASE_URL}/oauth/google/start?uid={callback.from_user.id}"
+    # ► ВКЛЮЧИТЬ
+    if current == "🤖❌ Бот выключен":
+        # 1) есть ли активная подписка
+        if not await get_subscription_until(uid):
+            await callback.answer("Подписка не активна. Продлите её через «💰 Оплата».", show_alert=True)
             return
-        await callback.answer(text="Запускаю Вашего бота ✅")
-        # не блокируем event loop
-        await asyncio.sleep(1)
-        await update_user_state(callback.from_user.id, "active")
-        await callback.message.edit_reply_markup(reply_markup=keyboard_sub(callback.from_user.id))
-        token, word_file = await get_user_token_and_doc(callback.from_user.id)
-        await run_bot(token, word_file, callback.from_user.id)
 
-    elif res == "🤖✅ Бот включен":
-        await callback.answer(text="Останавливаю Вашего бота ❌")
-        await update_user_state(callback.from_user.id, "stop")
-        await callback.message.edit_reply_markup(reply_markup=keyboard_sub(callback.from_user.id))
-        token, _ = await get_user_token_and_doc(callback.from_user.id)
-        await stop_bot(str(token))
+        # 2) обязателен ли Google OAuth и подключен ли он
+        if REQUIRE_GOOGLE and not await has_google_oauth(uid):
+            await callback.message.edit_text(
+                "Чтобы включить бота, подключите Google-аккаунт:",
+                reply_markup=InlineKeyboardBuilder()
+            .add(InlineKeyboardButton(text="🔗 Подключить Google", url=url))
+            .add(InlineKeyboardButton(text="↩️ Назад", callback_data="return"))
+            .adjust(1,1)
+            .as_markup()
+    )
+
+            await callback.answer()
+            return
+
+        # 3) есть ли токен бота
+        token, word_file = await get_user_token_and_doc(uid)
+        if not token:
+            await callback.message.answer(
+                "Не задан API-токен вашего Telegram-бота.\n"
+                "Укажите его в «/settings → Изменить API-токен».",
+                reply_markup=keyboard_return()
+            )
+            await callback.answer()
+            return
+
+        # 4) запускаем
+        await callback.answer("Запускаю вашего бота ✅")
+        await update_user_state(uid, "active")
+        await callback.message.edit_reply_markup(reply_markup=keyboard_sub(uid))
+        try:
+            # небольшая уступка циклу событий
+            await asyncio.sleep(0)
+            await run_bot(token, word_file, uid)
+        except Exception as e:
+            # откат состояния и сообщение об ошибке
+            await update_user_state(uid, "stop")
+            await callback.message.answer(
+                f"Не удалось запустить бота: {e}",
+                reply_markup=keyboard_return()
+            )
+
+    # ► ВЫКЛЮЧИТЬ
+    elif current == "🤖✅ Бот включен":
+        await callback.answer("Останавливаю вашего бота ❌")
+        await update_user_state(uid, "stop")
+        await callback.message.edit_reply_markup(reply_markup=keyboard_sub(uid))
+        token, _ = await get_user_token_and_doc(uid)
+        try:
+            await stop_bot(str(token))
+        except Exception:
+            # молча игнорируем — главное, что состояние в БД остановлено
+            pass
+
+    # ► Неизвестное состояние — просто перерисуем меню
+    else:
+        await callback.message.edit_reply_markup(
+            reply_markup=keyboard_sub(uid) if await get_subscription_until(uid) else keyboard_unsub()
+        )
+        await callback.answer("Обновил состояние, попробуйте ещё раз.")
 
 @router.callback_query(F.data == "prompt")
 async def prompt(callback: types.CallbackQuery):

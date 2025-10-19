@@ -99,6 +99,21 @@ async def save_refresh_token(user_id: int, creds: Credentials) -> None:
         )
         await conn.commit()
 
+async def has_google_oauth(user_id: int | str) -> bool:
+    """
+    Возвращает True, если для пользователя есть OAuth-токены Google.
+    Если таблицы нет — считаем, что не подключено.
+    """
+    try:
+        async with aiosqlite.connect(DB_PATH) as conn:
+            # название таблицы подставь своё, если другое
+            async with conn.execute(
+                "SELECT 1 FROM google_tokens WHERE user_id=? LIMIT 1", (user_id,)
+            ) as cur:
+                return (await cur.fetchone()) is not None
+    except Exception:
+        return False
+
 async def delete_refresh_token(user_id: int) -> None:
     async with aiosqlite.connect(DB_PATH) as conn:
         await conn.execute("DELETE FROM google_tokens WHERE user_id = ?", (user_id,))
