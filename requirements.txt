@@ -49,4 +49,4 @@ wrapt==1.17.3
 yarl==1.20.1
 yookassa==3.6.0
 faster-whisper
-ctranslate2==4.3.1
+ctranslate2==4.2.1

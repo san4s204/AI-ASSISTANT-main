@@ -12,15 +12,10 @@ TZ=Europe/Berlin
 # Системные зависимости
 RUN apt-get update \
 && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-build-essential curl tzdata git sqlite3 ffmpeg libgomp1 libstdc++6 execstack \
+build-essential curl tzdata git sqlite3 ffmpeg libgomp1 libstdc++6 \
 && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-
-# ---- fix execstack on ctranslate2 ----
-RUN set -eux; \
-  find /usr/local/lib/python* -path "*/site-packages/ctranslate2/lib/libctranslate2-*.so*" \
-    -print -exec execstack -c {} \; || true
 
 
 # Сначала ставим зависимости (для лучшего кеширования слоёв)
