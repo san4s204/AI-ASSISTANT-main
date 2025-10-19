@@ -1,5 +1,5 @@
 ARG PYTHON_VERSION=3.12.1
-FROM python:${PYTHON_VERSION}-slim AS base
+FROM python:${PYTHON_VERSION}-bullseye AS base
 
 
 # Базовые настройки Python и часовой пояс
@@ -12,7 +12,7 @@ TZ=Europe/Berlin
 # Системные зависимости
 RUN apt-get update \
 && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-build-essential curl tzdata git sqlite3 ffmpeg libgomp1 libstdc++6 \
+build-essential curl tzdata git sqlite3 ffmpeg libgomp1 libstdc++6 execstack  \
 && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
