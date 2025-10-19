@@ -28,7 +28,7 @@ async def cq_payment(callback: types.CallbackQuery):
             pass
     else:
         await callback.message.edit_text(
-            "💰 Выберите способ оплаты:\n\n1 месяц - 599 ₽ (7.4 USDT)",
+            "Выберите продукт для оплаты:",
             reply_markup=keyboard_change_ai()
         )
 

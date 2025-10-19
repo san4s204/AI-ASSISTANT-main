@@ -23,12 +23,26 @@ REQUIRE_GOOGLE = 1
 
 router = Router(name="settings")
 
+async def _ensure_active_sub(ctx: types.Message | types.CallbackQuery, uid: int) -> bool:
+    """
+    True — если подписка активна.
+    False — если нет: покажем пользователю уведомление и меню без подписки.
+    """
+    has_sub = bool(await get_subscription_until(uid))
+    if has_sub:
+        return True
+
+    msg = "Подписка не активна. Продлите её через «💰 Оплата»."
+    if isinstance(ctx, types.CallbackQuery):
+        await ctx.answer(msg, show_alert=True)
+        await ctx.message.edit_text("Главное меню:", reply_markup=keyboard_unsub())
+    else:
+        await ctx.answer(msg, reply_markup=keyboard_unsub())
+    return False
+
 @router.callback_query(F.data == "setting_bot")
 async def setting_bot_cb(callback: types.CallbackQuery):
-    await callback.message.edit_text(
-        "Настройка бота:",
-        reply_markup=keyboard_setting_bot()
-    )
+    await _render_settings(callback)
 
 @router.callback_query(F.data == "turn_on_off")
 async def turn_cb(callback: types.CallbackQuery):
@@ -105,35 +119,7 @@ async def turn_cb(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "prompt")
 async def prompt(callback: types.CallbackQuery):
-    link = await get_user_doc_id(callback.from_user.id)
-    if not link:
-        await callback.message.edit_text(
-            "Источник не привязан. Добавьте Документ или Таблицу:",
-            reply_markup=keyboard_attach_source()
-        )
-        return
-
-    try:
-        ans = await doc(link, owner_user_id=callback.from_user.id)
-        kind = ans.get("kind")
-        if kind == "sheet":
-            url = f"https://docs.google.com/spreadsheets/d/{ans['id']}/edit"
-            src_name = "Google Sheets"
-        else:
-            url = f"https://docs.google.com/document/d/{ans['id']}/edit"
-            src_name = "Google Docs"
-
-        await callback.message.edit_text(
-            f"Источник: {src_name}\n"
-            f"Название: {ans.get('title','')}\n"
-            f"Содержимое (превью):\n{ans.get('content','')}",
-            reply_markup=keyboard_prompt_controls(url)
-        )
-    except Exception:
-        await callback.answer(
-            "Не удалось открыть источник.\n«Попробуйте /settings → «🔗 Подключить Google",
-            show_alert=True
-        )
+    await _render_prompt_preview(callback, callback.from_user.id)
 
 
 @router.callback_query(F.data == "change_API")
@@ -352,15 +338,17 @@ async def cal_unlink(callback: types.CallbackQuery):
     else:
         await callback.answer("Нечего отвязывать — календарь не привязан.", show_alert=True)
 
-async def _render_settings(to_msg: types.Message | types.CallbackQuery):
-    # Унифицируем edit_text/answer
-    if isinstance(to_msg, types.CallbackQuery):
-        m = to_msg.message
-        await m.edit_text("Настройка бота:", reply_markup=keyboard_setting_bot())
+async def _render_settings(target: types.Message | types.CallbackQuery, user_id: int):
+    if not await _ensure_active_sub(target, user_id):
+        return
+    if isinstance(target, types.CallbackQuery):
+        await target.message.edit_text("Настройка бота:", reply_markup=keyboard_setting_bot())
     else:
-        await to_msg.answer("Настройка бота:", reply_markup=keyboard_setting_bot())
+        await target.answer("Настройка бота:", reply_markup=keyboard_setting_bot())
 
 async def _render_prompt_preview(to_msg: types.Message | types.CallbackQuery, user_id: int):
+    if not await _ensure_active_sub(to_msg, user_id):
+        return
     link = await get_user_doc_id(user_id)
     if not link:
         text = "Источник не привязан. Добавьте Документ или Таблицу:"
