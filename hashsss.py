@@ -55,16 +55,33 @@ def build_system_prompt(ans: dict) -> str:
     )
 
 async def answer(text: str, doc_id: str, owner_id: int | None = None) -> str:
-    ans = await doc(doc_id, owner_user_id=owner_id)  # {'id','title','content'}
+    # 0) нет источника — сразу дружелюбный ответ
+    if not (doc_id or "").strip():
+        return (
+            "ℹ️ Источник знаний не подключён.\n\n"
+            "Отправьте ссылку/ID Google Doc или Sheet командой /prompt, "
+            "или добавьте документ в настройках."
+        )
+
+    try:
+        ans = await doc(doc_id, owner_user_id=owner_id)  # {'id','title','content','kind'}
+    except FileNotFoundError:
+        return (
+            "⚠️ Документ/таблица не найдены или нет доступа.\n"
+            "Проверьте ссылку/ID и права общего доступа (как минимум «Просмотр по ссылке»), затем попробуйте снова."
+        )
+    except Exception as e:
+        # любые прочие ошибки Google/сетевые — коротко
+        return f"⚠️ Ошибка при чтении источника: {e.__class__.__name__}. Попробуйте позже."
+
     system_content = build_system_prompt(ans)
     logging.info(
         "system_prompt kind=%s title=%r len=%d head=%r",
         ans.get("kind"), ans.get("title"), len(system_content),
-        system_content[:160].replace("\n"," ")  # в лог — первые ~160 символов
+        system_content[:160].replace("\n", " ")
     )
 
     sys_hash = _system_hash(system_content)
-
     cache_key = f"openrouter:{doc_id}:{sys_hash}:{_md5(text)}"
 
     cached = await cache_get(cache_key)
@@ -88,7 +105,6 @@ async def answer(text: str, doc_id: str, owner_id: int | None = None) -> str:
         "Authorization": f"Bearer {OPEN_ROUTER_API_KEY}",
         "Content-Type": "application/json",
     }
-    # Project Keys требуют HTTP-Referer
     if OPENROUTER_REFERER:
         headers["HTTP-Referer"] = OPENROUTER_REFERER
     if OPENROUTER_TITLE:
@@ -100,11 +116,7 @@ async def answer(text: str, doc_id: str, owner_id: int | None = None) -> str:
         async with session.post(OPENROUTER_URL, json=payload, headers=headers) as resp:
             data = await resp.json(content_type=None)
             if resp.status >= 400:
-                # Подсказка для 401
-                if resp.status == 401:
-                    hint = " (Invalid key OR missing HTTP-Referer for Project Key)"
-                else:
-                    hint = ""
+                hint = " (Invalid key OR missing HTTP-Referer for Project Key)" if resp.status == 401 else ""
                 raise RuntimeError(f"OpenRouter error {resp.status}{hint}: {data}")
             try:
                 result = data["choices"][0]["message"]["content"]

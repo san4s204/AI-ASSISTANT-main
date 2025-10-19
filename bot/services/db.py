@@ -9,7 +9,7 @@ DB_PATH = os.getenv("DB_PATH", "db.db")
 
 def _format_subscription(dt: datetime.datetime) -> str:
     # Прежний формат: HH:MM:SS DD:MM:YYYY
-    return dt.strftime("%H:%M:%S ⌛️ %d:%m:%Y")
+    return dt.strftime("%H:%M:%S ⌛️ %d.%m.%Y")
 
 async def get_subscription_until(user_id: int | str) -> str | bool:
     """Возвращает строку c датой окончания подписки в формате "HH:MM:SS DD:MM:YYYY" или False."""

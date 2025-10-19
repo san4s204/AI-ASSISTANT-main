@@ -2,6 +2,7 @@ from __future__ import annotations
 from aiogram import Router, types
 from aiogram.fsm.context import FSMContext
 from aiogram import F
+from aiogram.filters import Command
 import asyncio
 from bot.states import Form
 from keyboards import keyboard_setting_bot, keyboard_sub, state_bot, keyboard_return, keyboard_prompt_controls, keyboard_confirm_delete_source, keyboard_attach_source, keyboard_calendar_menu, keyboard_unsub
@@ -34,7 +35,6 @@ async def turn_cb(callback: types.CallbackQuery):
     # Что сейчас показывает кнопка в меню (текущее состояние)
     uid = callback.from_user.id
     current = state_bot(uid)
-    url = f"{BASE_URL}/oauth/google/start?uid={callback.from_user.id}"
     # ► ВКЛЮЧИТЬ
     if current == "🤖❌ Бот выключен":
         # 1) есть ли активная подписка
@@ -44,6 +44,7 @@ async def turn_cb(callback: types.CallbackQuery):
 
         # 2) обязателен ли Google OAuth и подключен ли он
         if REQUIRE_GOOGLE and not await has_google_oauth(uid):
+            url = f"{BASE_URL}/oauth/google/start?uid={callback.from_user.id}"
             await callback.message.edit_text(
                 "Чтобы включить бота, подключите Google-аккаунт:",
                 reply_markup=InlineKeyboardBuilder()
@@ -130,7 +131,7 @@ async def prompt(callback: types.CallbackQuery):
         )
     except Exception:
         await callback.answer(
-            "Не удалось открыть источник. Проверьте доступ (OAuth/шаринг) и корректность ссылки.",
+            "Не удалось открыть источник.\n«Попробуйте /settings → «🔗 Подключить Google",
             show_alert=True
         )
 
@@ -350,3 +351,56 @@ async def cal_unlink(callback: types.CallbackQuery):
         await prompt(callback)
     else:
         await callback.answer("Нечего отвязывать — календарь не привязан.", show_alert=True)
+
+async def _render_settings(to_msg: types.Message | types.CallbackQuery):
+    # Унифицируем edit_text/answer
+    if isinstance(to_msg, types.CallbackQuery):
+        m = to_msg.message
+        await m.edit_text("Настройка бота:", reply_markup=keyboard_setting_bot())
+    else:
+        await to_msg.answer("Настройка бота:", reply_markup=keyboard_setting_bot())
+
+async def _render_prompt_preview(to_msg: types.Message | types.CallbackQuery, user_id: int):
+    link = await get_user_doc_id(user_id)
+    if not link:
+        text = "Источник не привязан. Добавьте Документ или Таблицу:"
+        if isinstance(to_msg, types.CallbackQuery):
+            await to_msg.message.edit_text(text, reply_markup=keyboard_attach_source())
+        else:
+            await to_msg.answer(text, reply_markup=keyboard_attach_source())
+        return
+
+    try:
+        ans = await doc(link, owner_user_id=user_id)
+        kind = ans.get("kind")
+        if kind == "sheet":
+            url = f"https://docs.google.com/spreadsheets/d/{ans['id']}/edit"
+            src_name = "Google Sheets"
+        else:
+            url = f"https://docs.google.com/document/d/{ans['id']}/edit"
+            src_name = "Google Docs"
+
+        preview = (
+            f"Источник: {src_name}\n"
+            f"Название: {ans.get('title','')}\n"
+            f"Содержимое (превью):\n{ans.get('content','')}"
+        )
+        if isinstance(to_msg, types.CallbackQuery):
+            await to_msg.message.edit_text(preview, reply_markup=keyboard_prompt_controls(url))
+        else:
+            await to_msg.answer(preview, reply_markup=keyboard_prompt_controls(url))
+
+    except Exception:
+        warn = "Не удалось открыть источник.\nПопробуйте /settings → «🔗 Подключить Google»"
+        if isinstance(to_msg, types.CallbackQuery):
+            await to_msg.answer(warn, show_alert=True)
+        else:
+            await to_msg.answer(warn)
+
+@router.message(Command("settings"))
+async def settings_cmd(message: types.Message):
+    await _render_settings(message)
+
+@router.message(Command("prompt"))
+async def prompt_cmd(message: types.Message):
+    await _render_prompt_preview(message, message.from_user.id)

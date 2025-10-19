@@ -1,6 +1,5 @@
 # openrouter.py
 from __future__ import annotations
-import re
 import asyncio
 import logging
 from typing import Dict, Optional
@@ -9,6 +8,7 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode, ChatAction
 from aiogram.client.default import DefaultBotProperties
 from aiogram.filters import CommandStart
+from googleapiclient.errors import HttpError
 from zoneinfo import ZoneInfo
 from datetime import datetime, timedelta
 from hashsss import answer  # асинхронный вызов OpenRouter с кэшем и Google Docs
@@ -108,11 +108,35 @@ async def _bot_worker(bot_token: str, doc_id: str, owner_id: int) -> None:
 
         # 3) Обычный ответ модели (Docs/Sheets/и т.д.)
         try:
+            # не дёргаем Google, если источник не подключён
+            if not (doc_id or "").strip():
+                await message.answer(
+                    "ℹ️ Источник знаний не подключён.\n"
+                    "Укажите ссылку/ID Google Doc/Sheet командой /prompt.",
+                    disable_web_page_preview=True,
+                )
+                return
+
             reply = await answer(text, doc_id, owner_id=owner_id)
-            if reply is None or str(reply).strip() == "":
+            if not str(reply).strip():
                 reply = "🤖 (пустой ответ)"
-        except Exception:
-            logging.exception("answer() failed")
+
+        except FileNotFoundError:
+            await message.answer(
+                "⚠️ Документ/таблица не найдены или нет доступа. "
+                "Проверьте ссылку/ID и права общего доступа.",
+                disable_web_page_preview=True,
+            )
+            return
+
+        except HttpError as e:
+            status = getattr(getattr(e, "resp", None), "status", "?")
+            logging.error("Google API HttpError %s (body suppressed)", status, exc_info=False)
+            await message.answer("⚠️ Ошибка Google API. Попробуйте позже.", disable_web_page_preview=True)
+            return
+
+        except Exception as e:
+            logging.error("answer() failed: %s", e.__class__.__name__, exc_info=False)
             await message.answer("⚠️ Ошибка при обращении к модели. Попробуйте позже.")
             return
 

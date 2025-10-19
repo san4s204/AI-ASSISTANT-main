@@ -7,7 +7,7 @@ import logging
 
 from providers.google_docs_oauth_provider import get_document_oauth
 from providers.google_sheets_oauth_provider import get_sheet_as_text_oauth
-
+from googleapiclient.errors import HttpError
 from providers.google_docs_provider import get_document as get_document_sa
 from providers.google_sheets_provider import get_sheet_as_text as get_sheet_sa
 
@@ -15,30 +15,41 @@ FORCE_GOOGLE_OAUTH = os.getenv("FORCE_GOOGLE_OAUTH") == "1"
 
 
 async def _read_via_oauth(owner_user_id: int, identifier: str) -> Dict[str, Any]:
-    """Пробуем прочитать Doc/Sheet через OAuth. Бросаем исключение — вызывающий решит, делать ли фолбэк."""
     s = (identifier or "").strip()
-    is_sheet = "/spreadsheets/d/" in s or s.endswith("sheet")  # простая эвристика
+    if not s:
+        raise FileNotFoundError("Empty document identifier")
+
+    is_sheet = "/spreadsheets/d/" in s or s.endswith("sheet")
     is_doc = "/document/d/" in s
 
     if is_sheet:
-        res = await get_sheet_as_text_oauth(owner_user_id, s)
+        try:
+            res = await get_sheet_as_text_oauth(owner_user_id, s)
+        except HttpError:
+            raise FileNotFoundError("Sheets: not found or no access") from None
         res["kind"] = "sheet"
         return res
+
     if is_doc:
-        res = await get_document_oauth(owner_user_id, s)
+        try:
+            res = await get_document_oauth(owner_user_id, s)
+        except HttpError:
+            raise FileNotFoundError("Docs: not found or no access") from None
         res["kind"] = "doc"
         return res
 
-    # неизвестно — попробуем Doc, затем Sheet
+    # неизвестно — сначала Doc, затем Sheet
     try:
         res = await get_document_oauth(owner_user_id, s)
         res["kind"] = "doc"
         return res
-    except Exception as e_doc:
-        # листы часто приходят с ?range=...
-        res = await get_sheet_as_text_oauth(owner_user_id, s)
-        res["kind"] = "sheet"
-        return res
+    except HttpError:
+        try:
+            res = await get_sheet_as_text_oauth(owner_user_id, s)
+            res["kind"] = "sheet"
+            return res
+        except HttpError:
+            raise FileNotFoundError("Document not found or no access") from None
 
 
 async def _read_via_service_account(identifier: str) -> Dict[str, Any]:

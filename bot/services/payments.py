@@ -51,7 +51,7 @@ async def start_yookassa(callback, state: FSMContext, bot: Bot) -> None:
     payment_url, payment_id = create(PRICE_premium, callback.from_user.id)
     await _safe_edit_text(
         callback.message,
-        "💳 Оплата на сумму 599.00 ₽\n\nСсылка на оплату действительна в течение 10 минут",
+        "💳 Оплата на сумму 599.00 ₽\n\nСсылка на оплату действительна в течение 10 минут\nПосле оплаты подписка обновится автоматически.",
         reply_markup=keyboard_yookassa(payment_url)
     )
     await state.set_state(PaymentStates.waiting_for_yookassa)
@@ -130,7 +130,7 @@ async def start_cryptobot(callback, state: FSMContext, bot: Bot) -> None:
 
     await _safe_edit_text(
         callback.message,
-        "💸 Оплата на сумму 7.2 USDT \n\nСсылка на оплату действительна в течение 10 минут",
+        "💸 Оплата на сумму 7.2 USDT \n\nСсылка на оплату действительна в течение 10 минут\nПосле оплаты подписка обновится автоматически.",
         reply_markup=keyboard_crypto_bot(invoice_url)
     )
     await state.set_state(PaymentStates.waiting_for_crypto_bot)
