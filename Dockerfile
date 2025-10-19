@@ -18,6 +18,7 @@ libavformat-dev libavcodec-dev libavdevice-dev libavutil-dev \
 libswscale-dev libavfilter-dev libswresample-dev \
 && rm -rf /var/lib/apt/lists/*
 
+ENV PIP_ONLY_BINARY=:all:
 
 WORKDIR /app
 

@@ -6,6 +6,7 @@ aiosend==2.1.3
 aiosignal==1.4.0
 aiosqlite==0.21.0
 annotated-types==0.7.0
+av==12.0.0
 attrs==25.3.0
 cachetools==5.5.2
 certifi==2025.8.3
