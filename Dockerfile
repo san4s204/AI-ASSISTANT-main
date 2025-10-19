@@ -1,5 +1,5 @@
 ARG PYTHON_VERSION=3.12.1
-FROM python:${PYTHON_VERSION}-bullseye AS base
+FROM python:${PYTHON_VERSION}-jammy AS base
 
 
 # Базовые настройки Python и часовой пояс
