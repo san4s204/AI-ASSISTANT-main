@@ -11,9 +11,7 @@ TZ=Europe/Berlin \
 STT_BACKEND=faster_whisper \
 WHISPER_MODEL=small \
 WHISPER_COMPUTE_TYPE=int8 \
-WHISPER_NUM_THREADS=4 \
-CT2_USE_MMAP=1 \
-CT2_FORCE_CPU_ISA=auto
+WHISPER_NUM_THREADS=4 
 
 
 # Системные зависимости
