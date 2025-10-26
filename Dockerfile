@@ -6,13 +6,20 @@ FROM python:${PYTHON_VERSION}-jammy AS base
 ENV PYTHONDONTWRITEBYTECODE=1 \
 PYTHONUNBUFFERED=1 \
 PIP_NO_CACHE_DIR=1 \
-TZ=Europe/Berlin
+TZ=Europe/Berlin \
+# CTranslate2/Whisper тюнинг по умолчанию (можно переопределить в .env)
+STT_BACKEND=faster_whisper \
+WHISPER_MODEL=small \
+WHISPER_COMPUTE_TYPE=int8 \
+WHISPER_NUM_THREADS=4 \
+CT2_USE_MMAP=1 \
+CT2_FORCE_CPU_ISA=auto
 
 
 # Системные зависимости
 RUN apt-get update \
 && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-build-essential curl tzdata git sqlite3 ffmpeg libgomp1 libstdc++6 execstack  \
+build-essential curl tzdata git sqlite3 ffmpeg libgomp1 libstdc++6 \
 && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
