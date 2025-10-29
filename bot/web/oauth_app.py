@@ -37,7 +37,7 @@ def make_app(bot: Bot) -> web.Application:
             await save_refresh_token(user_id, creds)
             # уведомим пользователя в TG
             try:
-                await bot.send_message(user_id, "✅ Google подключён. Можно использовать Docs/Sheets без шаринга.")
+                await bot.send_message(user_id, "✅ Google подключён. Можно использовать Docs/Sheets без постоянного входа в аккаунт.")
             except Exception:
                 pass
             return web.Response(text="Success! You can return to Telegram.")

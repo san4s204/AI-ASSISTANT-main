@@ -22,6 +22,10 @@ from pathlib import Path
 from aiogram import F
 from stt.provider import transcribe_file
 
+def _bc_kwargs(msg: types.Message) -> dict:
+    bc_id = getattr(msg, "business_connection_id", None)
+    return {"business_connection_id": bc_id} if bc_id else {}
+
 async def bot_worker(bot_token: str, doc_id: str, owner_id: int) -> None:
     bot = Bot(token=bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
@@ -30,7 +34,7 @@ async def bot_worker(bot_token: str, doc_id: str, owner_id: int) -> None:
         if not text.strip():
             return
         try:
-            await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
+            await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING, **_bc_kwargs(message))
         except Exception:
             pass
 
@@ -130,7 +134,7 @@ async def bot_worker(bot_token: str, doc_id: str, owner_id: int) -> None:
             tmpdir = Path(tmp)
             src_path = tmpdir / "input.ogg"
             try:
-                await message.bot.send_chat_action(message.chat.id, ChatAction.UPLOAD_VOICE)
+                await message.bot.send_chat_action(message.chat.id, ChatAction.UPLOAD_VOICE, **_bc_kwargs(message))
                 # прямой download
                 await message.bot.download(obj, destination=src_path)
             except Exception:
@@ -150,7 +154,7 @@ async def bot_worker(bot_token: str, doc_id: str, owner_id: int) -> None:
                 use_path = src_path
 
             try:
-                await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
+                await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING, **_bc_kwargs(message))
             except Exception:
                 pass
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 import hmac, hashlib, base64
 from typing import Optional, Dict
 import datetime
-
+import aiohttp
 import aiosqlite
 from google_auth_oauthlib.flow import Flow
 from google.oauth2.credentials import Credentials
@@ -68,7 +68,7 @@ async def build_auth_url(user_id: int) -> str:
     state = make_state(user_id)
     auth_url, _ = flow.authorization_url(
         access_type="offline",
-        include_granted_scopes="true",
+        include_granted_scopes=True,
         prompt="consent",
         state=state,
     )
@@ -99,22 +99,37 @@ async def save_refresh_token(user_id: int, creds: Credentials) -> None:
         )
         await conn.commit()
 
+async def _get_refresh_token(user_id: int) -> str | None:
+    async with aiosqlite.connect(DB_PATH) as conn:
+        async with conn.execute(
+            "SELECT refresh_token FROM google_tokens WHERE user_id=?", (user_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            return row[0] if row else None
+
+async def revoke_refresh_token(refresh_token: str) -> bool:
+    url = "https://oauth2.googleapis.com/revoke"
+    async with aiohttp.ClientSession() as s:
+        r = await s.post(
+            url,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            data={"token": refresh_token},
+        )
+        # 200 — успешно, 400 — уже отозван/некорректен — тоже ок.
+        return r.status in (200, 400)
+
 async def has_google_oauth(user_id: int | str) -> bool:
-    """
-    Возвращает True, если для пользователя есть OAuth-токены Google.
-    Если таблицы нет — считаем, что не подключено.
-    """
-    try:
-        async with aiosqlite.connect(DB_PATH) as conn:
-            # название таблицы подставь своё, если другое
-            async with conn.execute(
-                "SELECT 1 FROM google_tokens WHERE user_id=? LIMIT 1", (user_id,)
-            ) as cur:
-                return (await cur.fetchone()) is not None
-    except Exception:
-        return False
+    # используем уже готовый загрузчик с auto-refresh
+    creds = await load_user_credentials(int(user_id))
+    return creds is not None
 
 async def delete_refresh_token(user_id: int) -> None:
+    token = await _get_refresh_token(user_id)
+    if token:
+        try:
+            await revoke_refresh_token(token)
+        except Exception:
+            pass  # не ломаем UX
     async with aiosqlite.connect(DB_PATH) as conn:
         await conn.execute("DELETE FROM google_tokens WHERE user_id = ?", (user_id,))
         await conn.commit()
