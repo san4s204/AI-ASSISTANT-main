@@ -5,7 +5,7 @@ from aiogram.enums import ParseMode, ChatAction
 from aiogram.client.default import DefaultBotProperties
 from aiogram.filters import CommandStart
 from googleapiclient.errors import HttpError
-
+import contextlib
 from hashsss import answer
 from providers.google_calendar_oauth_provider import (
     get_user_timezone_oauth,
@@ -26,17 +26,33 @@ def _bc_kwargs(msg: types.Message) -> dict:
     bc_id = getattr(msg, "business_connection_id", None)
     return {"business_connection_id": bc_id} if bc_id else {}
 
+async def reply(msg: types.Message, *args, **kwargs):
+    # единая точка, всегда прокидываем business_connection_id, если есть
+    return await msg.answer(*args, **kwargs, **_bc_kwargs(msg))
+
 async def bot_worker(bot_token: str, doc_id: str, owner_id: int) -> None:
     bot = Bot(token=bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
 
+    @dp.business_connection()
+    async def on_biz_conn(update: types.BusinessConnection):
+        logging.info("Business connection: %s", update)
+
+    @dp.business_message(F.text | F.caption)
+    async def on_biz_text(message: types.Message):
+        text = message.text or message.caption or ""
+        await _process_text_query(message, text)   # <- без bc_id
+
+    @dp.business_message(F.voice | F.audio | F.video_note)
+    async def on_biz_voice(message: types.Message):
+        await voice_handler(message)    
+
     async def _process_text_query(message: types.Message, text: str):
         if not text.strip():
             return
-        try:
+        
+        with contextlib.suppress(Exception):
             await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING, **_bc_kwargs(message))
-        except Exception:
-            pass
 
         # 1) учёт/кошелёк
         try:
@@ -185,7 +201,15 @@ async def bot_worker(bot_token: str, doc_id: str, owner_id: int) -> None:
     }
 
     try:
-        await dp.start_polling(bot)
+        await dp.start_polling(bot, allowed_updates=[
+            "message",
+            "edited_message",
+            "callback_query",
+            "business_connection",
+            "business_message",
+            "edited_business_message",
+            "deleted_business_messages",
+        ],)
     except asyncio.CancelledError:
         pass
     except Exception as e:

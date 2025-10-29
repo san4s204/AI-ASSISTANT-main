@@ -93,7 +93,16 @@ async def _run():
             logging.exception("Failed to start subscription_expirer task")
 
         # 3) polling (блокирующе, до Ctrl+C/сигнала)
-        await dp.start_polling(bot, skip_updates=True)
+        await dp.start_polling(bot, allowed_updates=[
+        "message",
+        "edited_message",
+        "callback_query",
+        "business_connection",
+        "business_message",
+        "edited_business_message",
+        "deleted_business_messages",
+        # при желании: "chat_member", "my_chat_member", ...
+    ],)
 
     except (asyncio.CancelledError, KeyboardInterrupt):
         # обычное завершение
