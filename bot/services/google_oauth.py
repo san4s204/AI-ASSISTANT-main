@@ -68,7 +68,7 @@ async def build_auth_url(user_id: int) -> str:
     state = make_state(user_id)
     auth_url, _ = flow.authorization_url(
         access_type="offline",
-        include_granted_scopes=True,
+        include_granted_scopes="true",
         prompt="consent",
         state=state,
     )
