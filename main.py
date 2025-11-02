@@ -21,7 +21,7 @@ from bot.services.limits import RPM_MAP, RPD_MAP, resolve_plan
 # ↑↑↑ NEW ↑↑↑
 
 # === Инициализация ===
-cp = CryptoPay(CRYPTOTOKEN, TESTNET)  # если не используешь здесь — можно удалить
+cp = CryptoPay(CRYPTOTOKEN)  # если не используешь здесь — можно удалить
 bot = Bot(TOKEN)
 dp = Dispatcher()
 router = Router(name="core")  # если пустой — можно не подключать
