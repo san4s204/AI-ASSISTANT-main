@@ -6,7 +6,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from yookassa import Configuration, Payment
 
-cp = CryptoPay(CRYPTOTOKEN, TESTNET)
+cp = CryptoPay(CRYPTOTOKEN)
 
 YOOKASSA_ACCOUNT_ID = os.getenv("YOOKASSA_ACCOUNT_ID")
 YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY")
