@@ -1,17 +1,25 @@
 ai-assistant-tg.duckdns.org {
     encode zstd gzip
 
-    # Статика: privacy и файл верификации
-    handle_path /privacy* {
+    # /privacy.html
+    handle /privacy.html {
         root * /site
         file_server
     }
+
+    # Если хочешь, чтобы /privacy тоже открывал тот же файл
+    handle /privacy {
+        root * /site
+        try_files {path}.html {path} /privacy.html
+        file_server
+    }
+
     handle_path /google* {
         root * /site
         file_server
     }
 
-    # ГЛАВНАЯ страница — только "/"
+    # Главная страница "/"
     handle / {
         root * /site
         file_server
