@@ -69,7 +69,7 @@ async def render_prompt_preview(ctx: types.Message | types.CallbackQuery, uid: i
         preview = (
             f"Источник: {src_name}\n"
             f"Название: {ans.get('title','')}\n"
-            f"Содержимое (превью):\n{ans.get('content','')}"
+            # f"Содержимое (превью):\n{ans.get('content','')}"
         )
         if isinstance(ctx, types.CallbackQuery):
             await ctx.message.edit_text(preview, reply_markup=keyboard_prompt_controls(url))
