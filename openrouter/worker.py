@@ -196,9 +196,14 @@ async def bot_worker(bot_token: str, doc_id: str, owner_id: int) -> None:
 
     # регистрация в реестре
     state.ACTIVE[bot_token] = {
-        "bot": bot, "dp": dp, "task": asyncio.current_task(),
-        "doc_id": doc_id, "owner_id": owner_id,
+        "bot": bot, 
+        "dp": dp,
+        "task": asyncio.current_task(),
+        "doc_id": doc_id, 
+        "owner_id": owner_id,
     }
+
+    
 
     try:
         await dp.start_polling(bot, allowed_updates=[

@@ -15,15 +15,21 @@ async def run_bot(bot_token: str, doc_id: str, owner_id: int) -> bool:
     """
     if not bot_token:
         raise ValueError("bot_token is empty")
+
     if bot_token in state.ACTIVE:
+        logging.info("run_bot(%s): уже активен", bot_token[:10])
         return False
 
-    task = asyncio.create_task(bot_worker(bot_token, doc_id, owner_id), name=f"bot:{bot_token[:8]}")
-    def _done(_):
-        state.ACTIVE.pop(bot_token, None)
-    task.add_done_callback(_done)
+    task = asyncio.create_task(
+        bot_worker(bot_token, doc_id, owner_id),
+        name=f"bot:{bot_token[:8]}"
+    )
 
-    state.ACTIVE[bot_token] = {"task": task, "doc_id": doc_id, "owner_id": owner_id}
+    state.ACTIVE[bot_token] = {
+        "task": task,
+        "doc_id": doc_id,
+        "owner_id": owner_id,
+    }
     return True
 
 async def stop_bot(bot_token: str) -> bool:
@@ -32,34 +38,32 @@ async def stop_bot(bot_token: str) -> bool:
     """
     entry = state.ACTIVE.get(bot_token)
     if not entry:
+        logging.info("stop_bot(%s): нет активной записи", bot_token[:10])
         return False
 
     task: Optional[asyncio.Task] = entry.get("task")  # type: ignore[assignment]
-    dp: Optional[Dispatcher] = entry.get("dp")        # type: ignore[assignment]
-    bot: Optional[Bot] = entry.get("bot")             # type: ignore[assignment]
+    if not task:
+        logging.warning("stop_bot(%s): в ACTIVE нет task", bot_token[:10])
+        # запись всё равно удалит воркер в finally, но можем очистить сами:
+        state.ACTIVE.pop(bot_token, None)
+        return False
 
+    if task.done():
+        logging.info("stop_bot(%s): task уже завершена", bot_token[:10])
+        # воркер в своём finally уже должен был сделать pop
+        state.ACTIVE.pop(bot_token, None)
+        return True
+
+    logging.info("stop_bot(%s): отменяю polling task", bot_token[:10])
+    task.cancel()
     try:
-        if dp:
-            dp.stop_polling()
-    except Exception:
+        await task
+    except asyncio.CancelledError:
         pass
-
-    if task and not task.done():
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-        except Exception:
-            logging.exception("Polling task raised on cancel")
-
-    try:
-        if bot:
-            await bot.delete_webhook(drop_pending_updates=True)
-            await bot.session.close()
     except Exception:
-        pass
+        logging.exception("Polling task raised on cancel")
 
+    # окончательный pop — на случай, если воркер не добрался до finally
     state.ACTIVE.pop(bot_token, None)
     return True
 
