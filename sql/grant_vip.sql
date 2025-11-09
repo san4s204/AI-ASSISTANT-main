@@ -1,47 +1,23 @@
 -- sql/grant_vip.sql
 -- Параметры:
--- :issuer_id — Telegram ID администратора, который выдаёт
--- :uid       — Telegram ID пользователя, кому выдаём
--- :years     — на сколько лет (по умолчанию 50)
+--   :uid       - Telegram ID пользователя
+--   :username  - username (можно оставить NULL)
+--   :years     - на сколько лет вперёд
 
--- гарантируем необходимые таблицы
-CREATE TABLE IF NOT EXISTS admins (
-  user_id INTEGER PRIMARY KEY,
-  note    TEXT
-);
+PRAGMA foreign_keys = ON;
 
-CREATE TABLE IF NOT EXISTS admin_grants_log (
-  id            INTEGER PRIMARY KEY AUTOINCREMENT,
-  issuer_id     INTEGER NOT NULL,
-  target_id     INTEGER NOT NULL,
-  granted_until TEXT    NOT NULL,
-  created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
-);
-
--- Выдаём/продлеваем подписку (только если issuer — админ)
-INSERT INTO users (id, subscribe, date_end)
-SELECT
+WITH new_end AS (
+  SELECT datetime('now', printf('+%d years', :years)) AS dt
+)
+INSERT INTO users (id, username, subscribe, date_end, state_bot)
+VALUES (
   :uid,
+  :username,
   'subscribe',
-  datetime('now', '+' || COALESCE(:years, 50) || ' years')
-WHERE EXISTS (SELECT 1 FROM admins WHERE user_id = :issuer_id)
+  (SELECT dt FROM new_end),
+  COALESCE((SELECT state_bot FROM users WHERE id = :uid), 'stop')
+)
 ON CONFLICT(id) DO UPDATE SET
   subscribe = 'subscribe',
-  date_end  = datetime('now', '+' || COALESCE(:years, 50) || ' years');
-
--- Логирование (только если действительно админ)
-INSERT INTO admin_grants_log(issuer_id, target_id, granted_until)
-SELECT
-  :issuer_id,
-  :uid,
-  datetime('now', '+' || COALESCE(:years, 50) || ' years')
-WHERE EXISTS (SELECT 1 FROM admins WHERE user_id = :issuer_id);
-
--- Человекочитаемый результат
-SELECT
-  CASE
-    WHEN EXISTS (SELECT 1 FROM admins WHERE user_id = :issuer_id)
-      THEN 'OK: VIP granted to ' || :uid || ' until ' ||
-           datetime('now', '+' || COALESCE(:years, 50) || ' years')
-    ELSE 'DENIED: issuer is not admin'
-  END AS result;
+  date_end  = (SELECT dt FROM new_end),
+  username  = COALESCE(:username, users.username);
