@@ -83,7 +83,7 @@ async def stop_bot(bot_token: str) -> bool:
     if dp is not None:
         logging.info("stop_bot(%s…): вызываю dp.stop_polling()", bot_token[:10])
         with contextlib.suppress(Exception):
-            dp.stop_polling()
+            await dp.stop_polling()
 
     # 2) отменяем задачу, если ещё жива
     if isinstance(task, asyncio.Task) and not task.done():
