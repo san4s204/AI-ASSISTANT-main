@@ -87,16 +87,14 @@ async def answer(text: str, doc_id: str, owner_id: int | None = None, history: l
     )
 
     sys_hash = _system_hash(system_content)
+    # --- КЭШ ТОЛЬКО БЕЗ ИСТОРИИ ---
     cache_key = None
     if not history:
         cache_key = f"openrouter:{doc_id}:{sys_hash}:{_md5(text)}"
         cached = await cache_get(cache_key)
         if cached is not None:
             return cached
-
-    cached = await cache_get(cache_key)
-    if cached is not None:
-        return cached
+    # --- конец блока кэша ---
 
     if not OPEN_ROUTER_API_KEY:
         raise RuntimeError(
@@ -104,11 +102,8 @@ async def answer(text: str, doc_id: str, owner_id: int | None = None, history: l
             "Get a key at https://openrouter.ai/keys"
         )
 
-    messages = [
-        {"role": "system", "content": system_content},
-    ]
+    messages = [{"role": "system", "content": system_content}]
 
-    # подмешиваем историю, если есть
     if history:
         for role, msg in history:
             role = "assistant" if role == "assistant" else "user"
@@ -117,13 +112,9 @@ async def answer(text: str, doc_id: str, owner_id: int | None = None, history: l
                 continue
             messages.append({"role": role, "content": msg})
 
-    # текущий запрос пользователя — всегда последним
     messages.append({"role": "user", "content": text})
 
-    payload = {
-        "model": MODEL,
-        "messages": messages,
-    }
+    payload = {"model": MODEL, "messages": messages}
     headers = {
         "Authorization": f"Bearer {OPEN_ROUTER_API_KEY}",
         "Content-Type": "application/json",
@@ -135,7 +126,8 @@ async def answer(text: str, doc_id: str, owner_id: int | None = None, history: l
 
     ssl_context = ssl.create_default_context(cafile=certifi.where())
     timeout = aiohttp.ClientTimeout(total=30)
-    async with aiohttp.ClientSession(timeout=timeout, connector=aiohttp.TCPConnector(ssl=ssl_context)) as session:
+    async with aiohttp.ClientSession(timeout=timeout,
+                                     connector=aiohttp.TCPConnector(ssl=ssl_context)) as session:
         async with session.post(OPENROUTER_URL, json=payload, headers=headers) as resp:
             data = await resp.json(content_type=None)
             if resp.status >= 400:
@@ -146,7 +138,10 @@ async def answer(text: str, doc_id: str, owner_id: int | None = None, history: l
             except Exception:
                 raise RuntimeError(f"Unexpected OpenRouter response shape: {data}")
 
-    await cache_setex(cache_key, TTL_SECONDS, result) if cache_key else None
+    # кэшируем только если cache_key есть (т.е. нет history)
+    if cache_key:
+        await cache_setex(cache_key, TTL_SECONDS, result)
+
     return result
 
 # Для очистки кэша
