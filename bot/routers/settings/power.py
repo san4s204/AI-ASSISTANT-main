@@ -3,7 +3,7 @@ import asyncio
 import logging
 
 from aiogram import Router, types, F
-
+from aiogram.filters import Command
 from keyboards import keyboard_sub, keyboard_return, keyboard_unsub, state_bot
 from bot.services.db import (
     get_subscription_until,
@@ -12,7 +12,7 @@ from bot.services.db import (
 )
 from bot.services.google_oauth import has_google_oauth
 from .helpers import REQUIRE_GOOGLE, kb_connect_google
-from openrouter import run_bot, stop_user_bots
+from openrouter import run_bot, stop_user_bots, active_bots
 
 router = Router(name="settings.power")
 
@@ -89,3 +89,38 @@ async def turn_cb(callback: types.CallbackQuery):
             else keyboard_unsub()
         )
         await callback.answer("Обновил состояние, попробуйте ещё раз.")
+
+
+@router.message(Command("debug_child"))
+async def debug_child(message: types.Message):
+    uid = message.from_user.id
+
+    # 1) достаём из БД токен дочернего бота для этого пользователя
+    token, _ = await get_user_token_and_doc(uid)
+    if not token:
+        await message.answer("У тебя не задан API-токен дочернего бота в /settings.")
+        return
+
+    # 2) смотрим в реестр активных воркеров
+    bots = active_bots()
+    info = bots.get(token)
+
+    if not info:
+        await message.answer(
+            "🔴 Для твоего токена дочерний бот сейчас НЕ запущен.\n"
+            f"Токен начинается с: <code>{token[:10]}…</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    task = info.get("task")
+    running = isinstance(task, asyncio.Task) and not task.done()
+
+    await message.answer(
+        "🟢 Дочерний бот НАЙДЕН в реестре.\n"
+        f"owner_id в воркере: <code>{info.get('owner_id')}</code>\n"
+        f"doc_id: <code>{info.get('doc_id')}</code>\n"
+        f"task_running: <code>{running}</code>\n"
+        f"task_done: <code>{task.done() if isinstance(task, asyncio.Task) else 'n/a'}</code>",
+        parse_mode="HTML",
+    )
