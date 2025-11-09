@@ -14,7 +14,7 @@ from providers.google_calendar_oauth_provider import (
 from bot.services.db import get_user_calendar_id
 from bot.services.token_wallet import ensure_current_wallet, can_spend, debit, rough_token_estimate
 from bot.services.limits import month_token_allowance
-
+from bot.services.memory import get_memory_history, add_memory_message
 from .calendar_utils import looks_calendar, parse_range_ru, fmt_events
 from . import state
 
@@ -110,46 +110,69 @@ async def bot_worker(bot_token: str, doc_id: str, owner_id: int) -> None:
         # 3) Docs/Sheets + LLM
         try:
             if not (doc_id or "").strip():
-                await message.answer(
+                await reply(
+                    message,
                     "ℹ️ Источник знаний не подключён.\nУкажите ссылку/ID Google Doc/Sheet командой /prompt.",
                     disable_web_page_preview=True,
                 )
                 return
 
-            reply = await answer(text, doc_id, owner_id=owner_id)
-            if not str(reply).strip():
-                reply = "🤖 (пустой ответ)"
+            # достаем последние N реплик из памяти
+            history = await get_memory_history(owner_id, message.chat.id, limit=10)
+
+            bot_reply = await answer(
+                text,
+                doc_id,
+                owner_id=owner_id,
+                history=history,
+            )
+            if not str(bot_reply).strip():
+                bot_reply = "🤖 (пустой ответ)"
         except FileNotFoundError:
-            await message.answer(
-                "⚠️ Документ/таблица не найдены или нет доступа. Проверьте ссылку/ID и права общего доступа.",
+            await reply(
+                message,
+                "⚠️ Документ/таблица не найдены или нет доступа. "
+                "Проверьте ссылку/ID и права общего доступа.",
                 disable_web_page_preview=True,
             )
             return
         except HttpError as e:
             status = getattr(getattr(e, "resp", None), "status", "?")
             logging.error("Google API HttpError %s (body suppressed)", status, exc_info=False)
-            await message.answer("⚠️ Ошибка Google API. Попробуйте позже.", disable_web_page_preview=True)
+            await reply(
+                message,
+                "⚠️ Ошибка Google API. Попробуйте позже.",
+                disable_web_page_preview=True,
+            )
             return
         except Exception as e:
             logging.error("answer() failed: %s", e.__class__.__name__, exc_info=False)
-            await message.answer("⚠️ Ошибка при обращении к модели. Попробуйте позже.")
+            await reply(message, "⚠️ Ошибка при обращении к модели. Попробуйте позже.")
             return
 
         # 4) списание
         try:
-            est = rough_token_estimate(text, reply)
+            est = rough_token_estimate(text, bot_reply)
             ok = await debit(
-                owner_id, est,
+                owner_id,
+                est,
                 reason="llm-child-echo",
                 request_id=str(message.message_id),
                 meta={"bot_chat_id": message.chat.id},
             )
             if not ok:
-                await message.answer("ℹ️ Достигнут лимит токенов на месяц.")
+                await reply(message, "ℹ️ Достигнут лимит токенов на месяц.")
         except Exception as e:
             logging.warning("debit failed: %s", e.__class__.__name__)
 
-        await message.answer(reply, disable_web_page_preview=True)
+        # 5) запись в память диалога
+        try:
+            await add_memory_message(owner_id, message.chat.id, "user", text)
+            await add_memory_message(owner_id, message.chat.id, "assistant", bot_reply)
+        except Exception as e:
+            logging.warning("add_memory_message failed: %s", e.__class__.__name__)
+
+        await reply(message, bot_reply, disable_web_page_preview=True)
 
     @dp.message(CommandStart())
     async def start_handler(message: types.Message):

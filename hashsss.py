@@ -59,7 +59,7 @@ def build_system_prompt(ans: dict) -> str:
         f"--- КОНЕЦ ДАННЫХ ---"
     )
 
-async def answer(text: str, doc_id: str, owner_id: int | None = None) -> str:
+async def answer(text: str, doc_id: str, owner_id: int | None = None, history: list[tuple[str, str]] | None = None) -> str:
     # 0) нет источника — сразу дружелюбный ответ
     if not (doc_id or "").strip():
         return (
@@ -87,7 +87,12 @@ async def answer(text: str, doc_id: str, owner_id: int | None = None) -> str:
     )
 
     sys_hash = _system_hash(system_content)
-    cache_key = f"openrouter:{doc_id}:{sys_hash}:{_md5(text)}"
+    cache_key = None
+    if not history:
+        cache_key = f"openrouter:{doc_id}:{sys_hash}:{_md5(text)}"
+        cached = await cache_get(cache_key)
+        if cached is not None:
+            return cached
 
     cached = await cache_get(cache_key)
     if cached is not None:
@@ -99,12 +104,25 @@ async def answer(text: str, doc_id: str, owner_id: int | None = None) -> str:
             "Get a key at https://openrouter.ai/keys"
         )
 
+    messages = [
+        {"role": "system", "content": system_content},
+    ]
+
+    # подмешиваем историю, если есть
+    if history:
+        for role, msg in history:
+            role = "assistant" if role == "assistant" else "user"
+            msg = (msg or "").strip()
+            if not msg:
+                continue
+            messages.append({"role": role, "content": msg})
+
+    # текущий запрос пользователя — всегда последним
+    messages.append({"role": "user", "content": text})
+
     payload = {
         "model": MODEL,
-        "messages": [
-            {"role": "system", "content": system_content},
-            {"role": "user", "content": text},
-        ],
+        "messages": messages,
     }
     headers = {
         "Authorization": f"Bearer {OPEN_ROUTER_API_KEY}",
@@ -128,7 +146,7 @@ async def answer(text: str, doc_id: str, owner_id: int | None = None) -> str:
             except Exception:
                 raise RuntimeError(f"Unexpected OpenRouter response shape: {data}")
 
-    await cache_setex(cache_key, TTL_SECONDS, result)
+    await cache_setex(cache_key, TTL_SECONDS, result) if cache_key else None
     return result
 
 # Для очистки кэша
