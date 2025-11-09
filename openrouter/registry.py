@@ -1,7 +1,8 @@
 from __future__ import annotations
 import asyncio, logging
 from typing import Dict, Optional
-from aiogram import Bot, Dispatcher
+from aiogram import Bot
+from aiogram.exceptions import TelegramConflictError, TelegramUnauthorizedError
 
 from . import state
 from .worker import bot_worker
@@ -10,6 +11,25 @@ log = logging.getLogger(__name__)
 
 def active_bots() -> Dict[str, Dict[str, object]]:
     return dict(state.ACTIVE)
+
+async def check_token_free(bot_token: str) -> None:
+    """
+    Делает один короткий getUpdates и смотрит, есть ли конфликт.
+    НИЧЕГО не сохраняем, это чисто диагностика.
+    """
+    tmp_bot = Bot(bot_token)
+    try:
+        # timeout=0, limit=1 — мгновенный запрос без long polling
+        await tmp_bot.get_updates(limit=1, timeout=0)
+        log.info("check_token_free(%s…): OK, конфликтов нет", bot_token[:10])
+    except TelegramConflictError:
+        log.error("check_token_free(%s…): КТО-ТО ЕЩЁ ПОЛЛИТ ЭТОТ ТОКЕН!", bot_token[:10])
+    except TelegramUnauthorizedError:
+        log.warning("check_token_free(%s…): Unauthorized — токен невалиден/отозван", bot_token[:10])
+    except Exception as e:
+        log.exception("check_token_free(%s…): неожиданный сбой: %s", bot_token[:10], e)
+    finally:
+        await tmp_bot.session.close()
 
 async def run_bot(bot_token: str, doc_id: str, owner_id: int) -> bool:
     """
@@ -49,36 +69,30 @@ async def run_bot(bot_token: str, doc_id: str, owner_id: int) -> bool:
     return True
 
 async def stop_bot(bot_token: str) -> bool:
-    """
-    Останавливает «дочернего» бота по токену.
-    True — если что-то реально останавливали, False — если не найден.
-    """
     rec = state.ACTIVE.get(bot_token)
-    if rec is None:
-        log.info("stop_bot(%s…): в ACTIVE нет записи", bot_token[:10])
+    if not rec:
+        logging.info("stop_bot(%s…): в ACTIVE нет записи", bot_token[:10])
+        # даже если мы себя не найдём — можем всё равно пнуть токен для диагностики
+        await check_token_free(bot_token)
         return False
 
-    task = rec.get("task")
-    if not isinstance(task, asyncio.Task):
-        log.warning("stop_bot(%s…): task отсутствует/битый, просто удаляем запись", bot_token[:10])
-        state.ACTIVE.pop(bot_token, None)
-        return False
+    task: Optional[asyncio.Task] = rec.get("task")  # type: ignore[assignment]
 
-    if task.done():
-        log.info("stop_bot(%s…): task уже завершён", bot_token[:10])
-        state.ACTIVE.pop(bot_token, None)
-        return True
-
-    log.info("stop_bot(%s…): отменяю polling task", bot_token[:10])
-    task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        pass
-    except Exception:
-        log.exception("Polling task raised on cancel")
+    if isinstance(task, asyncio.Task) and not task.done():
+        logging.info("stop_bot(%s…): отменяю polling task", bot_token[:10])
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logging.exception("Polling task raised on cancel")
 
     state.ACTIVE.pop(bot_token, None)
+
+    # ⬇️ вот здесь диагностический "пинг"
+    await check_token_free(bot_token)
+
     return True
 
 
