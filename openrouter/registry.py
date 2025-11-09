@@ -1,9 +1,9 @@
 from __future__ import annotations
 import asyncio, logging
 from typing import Dict, Optional
-from aiogram import Bot
+from aiogram import Bot, Dispatcher
 from aiogram.exceptions import TelegramConflictError, TelegramUnauthorizedError
-
+import contextlib
 from . import state
 from .worker import bot_worker
 
@@ -72,12 +72,20 @@ async def stop_bot(bot_token: str) -> bool:
     rec = state.ACTIVE.get(bot_token)
     if not rec:
         logging.info("stop_bot(%s…): в ACTIVE нет записи", bot_token[:10])
-        # даже если мы себя не найдём — можем всё равно пнуть токен для диагностики
         await check_token_free(bot_token)
         return False
 
-    task: Optional[asyncio.Task] = rec.get("task")  # type: ignore[assignment]
+    task: Optional[asyncio.Task] = rec.get("task")    # type: ignore[assignment]
+    dp:   Optional[Dispatcher] = rec.get("dp")        # type: ignore[assignment]
+    bot:  Optional[Bot] = rec.get("bot")              # type: ignore[assignment]
 
+    # 1) мягко останавливаем polling
+    if dp is not None:
+        logging.info("stop_bot(%s…): вызываю dp.stop_polling()", bot_token[:10])
+        with contextlib.suppress(Exception):
+            dp.stop_polling()
+
+    # 2) отменяем задачу, если ещё жива
     if isinstance(task, asyncio.Task) and not task.done():
         logging.info("stop_bot(%s…): отменяю polling task", bot_token[:10])
         task.cancel()
@@ -88,6 +96,18 @@ async def stop_bot(bot_token: str) -> bool:
         except Exception:
             logging.exception("Polling task raised on cancel")
 
+    # 3) на всякий случай закрываем сессию бота, если воркер сам не успел
+    if bot is not None:
+        with contextlib.suppress(Exception):
+            await bot.session.close()
+
+    # 4) чистим реестр
+    state.ACTIVE.pop(bot_token, None)
+
+    # 5) диагностический пинг — смотрим, есть ли ещё кто-то, кто poll'ит этот токен
+    await check_token_free(bot_token)
+
+    return True
     state.ACTIVE.pop(bot_token, None)
 
     # ⬇️ вот здесь диагностический "пинг"

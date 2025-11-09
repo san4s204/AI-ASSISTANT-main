@@ -36,6 +36,22 @@ async def bot_worker(bot_token: str, doc_id: str, owner_id: int) -> None:
     bot = Bot(token=bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
 
+    info = state.ACTIVE.get(bot_token)
+    if info is not None:
+        info["bot"] = bot
+        info["dp"] = dp
+        info["owner_id"] = owner_id
+        info["doc_id"] = doc_id
+    else:
+        # на всякий случай, если кто-то вызвал bot_worker напрямую
+        state.ACTIVE[bot_token] = {
+            "bot": bot,
+            "dp": dp,
+            "task": asyncio.current_task(),
+            "owner_id": owner_id,
+            "doc_id": doc_id,
+        }
+
     @dp.business_connection()
     async def on_biz_conn(update: types.BusinessConnection):
         logging.info("Business connection: %s", update)
