@@ -1,6 +1,5 @@
 # bot/routers/reply_shortcuts.py
 from __future__ import annotations
-import asyncio
 from aiogram import Router, types, F
 
 from keyboards import (
@@ -9,45 +8,25 @@ from keyboards import (
     keyboard_prompt_controls,
     keyboard_attach_source,
 )
-from bot.services.db import (
-    update_user_state,
-    get_user_token_and_doc,
-    get_user_doc_id,
-)
-from openrouter import run_bot, stop_bot
+from bot.services.db import get_user_doc_id
 from deepseek import doc
 
 router = Router(name="reply_shortcuts")
 
-# 1) Вкл/выкл «личного» бота (динамическая кнопка с текстом state_bot)
+# 1) Вкл/выкл «личного» бота — ТЕПЕРЬ БЕЗ run_bot/stop_bot
 @router.message(F.text.in_(["🤖✅ Бот включен", "🤖❌ Бот выключен"]))
 async def toggle_personal_bot(message: types.Message):
-    label = (message.text or "").strip()
+    """
+    Раньше здесь запускали/останавливали дочернего бота напрямую,
+    из-за чего получались двойные polling'и.
 
-    if "выключен" in label:
-        await message.answer("Запускаю Вашего бота ✅")
-        await asyncio.sleep(0.5)
-        await update_user_state(message.from_user.id, "active")
-        await message.answer("Главное меню:", reply_markup=keyboard_sub(message.from_user.id))
-
-        token, word_file = await get_user_token_and_doc(message.from_user.id)
-        if token:
-            try:
-                await run_bot(token, word_file, message.from_user.id)
-            except Exception:
-                # не валимся с ошибкой — просто показываем меню
-                pass
-    else:
-        await message.answer("Останавливаю Вашего бота ❌")
-        await update_user_state(message.from_user.id, "stop")
-        await message.answer("Главное меню:", reply_markup=keyboard_sub(message.from_user.id))
-
-        token, _ = await get_user_token_and_doc(message.from_user.id)
-        if token:
-            try:
-                await stop_bot(str(token))
-            except Exception:
-                pass
+    Теперь просто показываем главное меню с inline-кнопкой,
+    которая уже ведёт на общий хендлер `turn_on_off`.
+    """
+    await message.answer(
+        "Управление запуском бота теперь на кнопке в меню ниже 👇",
+        reply_markup=keyboard_sub(message.from_user.id),
+    )
 
 
 # 2) Открыть настройки (inline-меню)
