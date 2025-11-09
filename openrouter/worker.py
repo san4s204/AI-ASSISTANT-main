@@ -22,6 +22,8 @@ from pathlib import Path
 from aiogram import F
 from stt.provider import transcribe_file
 
+log = logging.getLogger(__name__)
+
 def _bc_kwargs(msg: types.Message) -> dict:
     bc_id = getattr(msg, "business_connection_id", None)
     return {"business_connection_id": bc_id} if bc_id else {}
@@ -194,38 +196,26 @@ async def bot_worker(bot_token: str, doc_id: str, owner_id: int) -> None:
             return
         await _process_text_query(message, text)
 
-    # регистрация в реестре
-    state.ACTIVE[bot_token] = {
-        "bot": bot, 
-        "dp": dp,
-        "task": asyncio.current_task(),
-        "doc_id": doc_id, 
-        "owner_id": owner_id,
-    }
-
-    
-
+    log.info("bot_worker(%s…): start_polling()", bot_token[:10])
     try:
-        await dp.start_polling(bot, allowed_updates=[
-            "message",
-            "edited_message",
-            "callback_query",
-            "business_connection",
-            "business_message",
-            "edited_business_message",
-            "deleted_business_messages",
-        ],)
+        await dp.start_polling(
+            bot,
+            allowed_updates=[
+                "message",
+                "edited_message",
+                "callback_query",
+                "business_connection",
+                "business_message",
+                "edited_business_message",
+                "deleted_business_messages",
+            ],
+        )
     except asyncio.CancelledError:
-        pass
+        log.info("bot_worker(%s…): CancelledError, выходим", bot_token[:10])
+        raise
     except Exception as e:
-        logging.error(f"[{bot_token[:8]}…] Ошибка во время polling: {e}")
+        log.error("bot_worker(%s…): ошибка во время polling: %s", bot_token[:10], e)
     finally:
-        try:
-            await bot.delete_webhook(drop_pending_updates=True)
-        except Exception:
-            pass
-        try:
+        with contextlib.suppress(Exception):
             await bot.session.close()
-        except Exception:
-            pass
-        state.ACTIVE.pop(bot_token, None)
+        log.info("bot_worker(%s…): session closed, завершение", bot_token[:10])
