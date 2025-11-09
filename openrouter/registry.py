@@ -62,3 +62,25 @@ async def stop_bot(bot_token: str) -> bool:
 
     state.ACTIVE.pop(bot_token, None)
     return True
+
+
+async def stop_user_bots(owner_id: int) -> int:
+    """
+    Останавливает все дочерние боты, которые принадлежат owner_id.
+    Возвращает количество остановленных воркеров.
+    """
+    # копируем ключи, чтобы не итерироваться по изменяемому dict
+    tokens = [
+        tok for tok, info in state.ACTIVE.items()
+        if info.get("owner_id") == owner_id
+    ]
+
+    stopped = 0
+    for tok in tokens:
+        try:
+            ok = await stop_bot(tok)
+            if ok:
+                stopped += 1
+        except Exception:
+            logging.exception("stop_bot(%s) failed", tok)
+    return stopped

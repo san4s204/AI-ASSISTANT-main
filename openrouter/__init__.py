@@ -1,1 +1,1 @@
-from .registry import run_bot, stop_bot, active_bots
+from .registry import run_bot, stop_bot, active_bots, stop_user_bots
