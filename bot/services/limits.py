@@ -54,7 +54,7 @@ async def resolve_plan(user_id: int) -> str:
 # === Месячные квоты токенов по планам ===
 TOKEN_ALLOWANCE_MAP: Dict[str, int] = {
     "free":    _env_int("LIMITS_TOKENS_FREE",    400),   # ~малые объемы
-    "premium": _env_int("LIMITS_TOKENS_PREMIUM", 800), # побольше
+    "premium": _env_int("LIMITS_TOKENS_PREMIUM", 80000), # побольше
 }
 
 async def month_token_allowance(user_id: int) -> int:
