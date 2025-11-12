@@ -35,6 +35,5 @@ async def cq_help(callback: types.CallbackQuery):
 async def terms_handler(message: types.Message):
     await message.answer(
         terms_text(),
-        disable_web_page_preview=False,
-        reply_markup=keyboard_terms(),
+        parse_mode="HTML",
     )
