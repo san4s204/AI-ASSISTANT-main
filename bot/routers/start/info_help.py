@@ -36,4 +36,5 @@ async def terms_handler(message: types.Message):
     await message.answer(
         terms_text(),
         parse_mode="HTML",
+        disable_web_page_preview=True
     )
