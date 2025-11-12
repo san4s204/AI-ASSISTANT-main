@@ -11,7 +11,7 @@ from keyboards import (
     keyboard_yookassa, keyboard_crypto_bot,
     keyboard_sub, keyboard_subscribe, keyboard_return
 )
-from payments import create, check, cp  # cp = CryptoPay(...)
+from payments import create, check, cp, get_usdt_amount_for_rub  # cp = CryptoPay(...)
 from bot.services.db import get_subscription_until, set_subscription_active
 
 # Константы проверки
@@ -124,13 +124,27 @@ async def verify_yookassa(state: FSMContext, bot: Bot, chatid: int, username: Op
 async def start_cryptobot(callback, state: FSMContext, bot: Bot) -> None:
     await _cancel_checker(callback.from_user.id)
 
-    invoice = await cp.create_invoice(asset=ASSET, amount=AMOUNT_premium)
+    # RUB-цена подписки — берём из config (PRICE_premium = "599.0" и т.п.)
+    rub_price = float(PRICE_premium)
+
+    # Пробуем взять живой курс USDT/RUB
+    try:
+        usdt_amount = await get_usdt_amount_for_rub(rub_price)
+    except Exception:
+        # если что-то пошло не так — fallback к старому значению из AMOUNT_premium
+        usdt_amount = float(AMOUNT_premium)
+
+    invoice = await cp.create_invoice(asset=ASSET, amount=usdt_amount)
     invoice_url = str(getattr(invoice, "bot_invoice_url", invoice))
     invoice_id = str(getattr(invoice, "invoice_id", ""))
 
     await _safe_edit_text(
         callback.message,
-        "💸 Оплата на сумму 7.2 USDT \n\nСсылка на оплату действительна в течение 10 минут\nПосле оплаты подписка обновится автоматически.",
+        (
+            f"💸 Оплата на сумму {usdt_amount:.2f} {ASSET} (≈ {rub_price:.2f} ₽)\n\n"
+            "Ссылка на оплату действительна в течение 10 минут.\n"
+            "После оплаты подписка обновится автоматически."
+        ),
         reply_markup=keyboard_crypto_bot(invoice_url)
     )
     await state.set_state(PaymentStates.waiting_for_crypto_bot)

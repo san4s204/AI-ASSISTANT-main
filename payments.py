@@ -1,7 +1,7 @@
 from yookassa import Payment
 import uuid
-from config import ACCOUNT_ID, SECRET_KEY, CRYPTOTOKEN
-from aiosend import CryptoPay, TESTNET
+from config import  CRYPTOTOKEN
+from aiosend import CryptoPay
 import os
 from datetime import datetime, timedelta, timezone
 from yookassa import Configuration, Payment
@@ -50,6 +50,37 @@ def create(amount_rub: float, tg_user_id: int) -> tuple[str, str]:
     url = payment.confirmation.confirmation_url
     return url, payment.id
 
+async def get_usdt_amount_for_rub(rub_amount: float) -> float:
+    """
+    Возвращает сумму в USDT, эквивалентную rub_amount RUB,
+    по курсу из CryptoPay.get_exchange_rates().
+
+    Если курс получить не удалось — берём fallback из env:
+    USDT_RUB_FALLBACK (по умолчанию 100.0).
+    """
+    try:
+        rates = await cp.get_exchange_rates()
+        usdt_rub = None
+
+        for r in rates:
+            # aiosend обычно возвращает объекты с полями source/target/rate
+            src = getattr(r, "source", "").upper()
+            tgt = getattr(r, "target", "").upper()
+            if src == "USDT" and tgt in ("RUB", "RUR"):
+                usdt_rub = float(getattr(r, "rate"))
+                break
+
+        if not usdt_rub or usdt_rub <= 0:
+            raise RuntimeError("USDT/RUB rate not found")
+
+    except Exception:
+        # fallback, чтобы платежи всё равно работали
+        fallback = float(os.getenv("USDT_RUB_FALLBACK", "100.0"))
+        usdt_rub = fallback
+
+    # округляем до сотых, CryptoBot нормально ест такие суммы
+    return round(rub_amount / usdt_rub, 2)
+
 def check(payment_id: str) -> bool:
     """
     Возвращает True, если платёж успешно оплачен (paid==True / status=='succeeded').
@@ -64,11 +95,8 @@ def check(payment_id: str) -> bool:
 
 async def cript(invoice_id):
     a = str(await cp.get_invoice(invoice_id))
-    print(a)
     try:
         if a.split(' ')[7] == 'paid_amount=1.0':
-            print('Yes')
-            print(a.split()[7])
             return 'Yes'
         else:
             return False

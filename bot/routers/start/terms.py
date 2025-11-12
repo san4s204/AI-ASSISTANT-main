@@ -1,7 +1,7 @@
 from __future__ import annotations
 from aiogram import Router, types, F
 from bot.services.db import has_accepted_terms, set_terms_accepted, get_subscription_until
-from keyboards import keyboard_return, keyboard_sub, keyboard_unsub, keyboard_terms
+from keyboards import keyboard_return, keyboard_sub, keyboard_unsub
 from .helpers import  welcome_text, DEMO_VIDEO_FILE_ID
 
 router = Router(name="start.terms")
