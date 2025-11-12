@@ -1,8 +1,8 @@
 from __future__ import annotations
 from aiogram import Router, types, F
 from aiogram.filters import Command
-from keyboards import keyboard_return, keyboard_terms
-from .helpers import info_text, terms_text
+from keyboards import keyboard_return
+from .helpers import info_text, terms_text_for_info
 
 router = Router(name="start.info_help")
 
@@ -34,7 +34,7 @@ async def cq_help(callback: types.CallbackQuery):
 @router.message(Command("terms"))
 async def terms_handler(message: types.Message):
     await message.answer(
-        terms_text(),
+        terms_text_for_info(),
         parse_mode="HTML",
         disable_web_page_preview=True
     )
