@@ -14,7 +14,7 @@ ai-assistant-tg.duckdns.org {
         file_server
     }
 
-    handle_path /google* {
+    handle /google* {
         root * /site
         file_server
     }
