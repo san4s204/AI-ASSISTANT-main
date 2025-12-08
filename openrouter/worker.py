@@ -29,8 +29,11 @@ def _bc_kwargs(msg: types.Message) -> dict:
     return {"business_connection_id": bc_id} if bc_id else {}
 
 async def reply(msg: types.Message, *args, **kwargs):
-    # единая точка, всегда прокидываем business_connection_id, если есть
-    return await msg.answer(*args, **kwargs, **_bc_kwargs(msg))
+    # Aiogram сам добавит business_connection_id в answer() для business-чата.
+    # Убираем, если кто-то случайно передал его в kwargs.
+    kwargs.pop("business_connection_id", None)
+    kwargs.pop("business_message_id", None)
+    return await msg.answer(*args, **kwargs)
 
 async def bot_worker(bot_token: str, doc_id: str, owner_id: int) -> None:
     bot = Bot(token=bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
