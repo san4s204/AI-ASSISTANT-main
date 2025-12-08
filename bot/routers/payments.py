@@ -1,7 +1,7 @@
 from __future__ import annotations
 from aiogram import Router, types
 from aiogram.fsm.context import FSMContext
-from bot.services.payments import start_yookassa, start_cryptobot, _cancel_checker, _safe_edit_text
+from bot.services.payments import start_yookassa, _cancel_checker, _safe_edit_text
 from aiogram import F
 from keyboards import (
     keyboard_payment_premium,
@@ -43,9 +43,6 @@ async def cq_ai_premium(callback: types.CallbackQuery):
 async def cq_yookassa(callback: types.CallbackQuery, state: FSMContext):
     await start_yookassa(callback, state, callback.bot)
 
-@router.callback_query(F.data == "cryptobot_premium")
-async def cq_crypto_bot(callback: types.CallbackQuery, state: FSMContext):
-    await start_cryptobot(callback, state, callback.bot)
 
 @router.callback_query(F.data == "subscribe")
 async def subscribe(callback: types.CallbackQuery):

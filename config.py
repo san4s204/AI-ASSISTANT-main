@@ -14,6 +14,9 @@ MANAGER_GROUP = int(os.getenv("MANAGER_GROUP", "0"))
 # === Crypto Bot (CryptoPay / aiosend) ===
 ASSET = os.getenv("CRYPTO_ASSET", "USDT")
 CRYPTOTOKEN = os.getenv("CRYPTO_TOKEN")
+ASSET = os.getenv("CRYPTO_ASSET", "USDT")
+CRYPTOTOKEN = os.getenv("CRYPTO_TOKEN")
+CRYPTO_ENABLED = os.getenv("CRYPTO_ENABLED", "1") == "1"
 
 # === YooKassa ===
 ACCOUNT_ID = os.getenv("YOOKASSA_ACCOUNT_ID")

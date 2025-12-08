@@ -2,7 +2,7 @@ from __future__ import annotations
 import sqlite3
 from aiogram.types import KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
-from config import MANAGER_URL
+from config import MANAGER_URL, CRYPTO_ENABLED
 
 # ---------------- Reply keyboards ----------------
 CB_CANCEL = "pay_cancel"
@@ -74,9 +74,10 @@ def keyboard_payment_bot():
     builder = InlineKeyboardBuilder()
     builder.add(
         InlineKeyboardButton(text="💳 ЮКасса", callback_data="yookassa_bot"),
-        InlineKeyboardButton(text="💸 Crypto Bot", callback_data="cryptobot_bot"),
-        InlineKeyboardButton(text="↩️ Назад", callback_data="payment"),
     )
+    if CRYPTO_ENABLED:
+        builder.add(InlineKeyboardButton(text="💸 Crypto Bot", callback_data="cryptobot_bot"))
+    builder.add(InlineKeyboardButton(text="↩️ Назад", callback_data="payment"))
     builder.adjust(1, 1, 1)
     return builder.as_markup()
 
@@ -85,9 +86,10 @@ def keyboard_payment_premium():
     builder = InlineKeyboardBuilder()
     builder.add(
         InlineKeyboardButton(text="💳 ЮКасса", callback_data="yookassa_premium"),
-        InlineKeyboardButton(text="💸 Crypto Bot", callback_data="cryptobot_premium"),
-        InlineKeyboardButton(text="↩️ Назад", callback_data="payment"),
     )
+    if CRYPTO_ENABLED:
+        builder.add(InlineKeyboardButton(text="💸 Crypto Bot", callback_data="cryptobot_premium"))
+    builder.add(InlineKeyboardButton(text="↩️ Назад", callback_data="payment"))
     builder.adjust(1, 1, 1)
     return builder.as_markup()
 

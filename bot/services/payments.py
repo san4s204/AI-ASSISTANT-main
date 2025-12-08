@@ -1,24 +1,24 @@
 from __future__ import annotations
 import asyncio
-from typing import Optional
 import contextlib
+from typing import Optional
 from aiogram import Bot
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-import os
-from config import PRICE_premium, AMOUNT_premium, ASSET, MANAGER_GROUP
+from config import PRICE_premium, MANAGER_GROUP
 from keyboards import (
-    keyboard_yookassa, keyboard_crypto_bot,
-    keyboard_sub, keyboard_subscribe, keyboard_return
+    keyboard_yookassa,
+    keyboard_sub,
+    keyboard_subscribe,
+    keyboard_return,
 )
-from payments import create, check, cp, get_usdt_amount_for_rub  # cp = CryptoPay(...)
+from payments import create, check
 from bot.services.db import get_subscription_until, set_subscription_active
 
 # Константы проверки
 CHECKERS: dict[int, asyncio.Task] = {}
-MAX_ATTEMPTS = 200            # попыток проверки статуса
-SLEEP_SECONDS = 3             # пауза между проверками, сек
-
+MAX_ATTEMPTS = 200
+SLEEP_SECONDS = 3
 
 
 async def _cancel_checker(chatid: int) -> None:
@@ -30,16 +30,15 @@ async def _cancel_checker(chatid: int) -> None:
 
 class PaymentStates(StatesGroup):
     waiting_for_yookassa = State()
-    waiting_for_crypto_bot = State()
-    payment_verified = State()     # финальное состояние (коротко используем и очищаем)
-    attempts = State()             # (необязательно; оставлено для совместимости)
+    payment_verified = State()
+    attempts = State()  # оставлено для совместимости, можно убрать если нигде не используется
+
 
 async def _safe_edit_text(message, text: str, reply_markup=None) -> None:
     """Безопасная правка текста: игнорирует мелкие ошибки типа MessageNotModified."""
     try:
         await message.edit_text(text, reply_markup=reply_markup)
     except Exception:
-        # Например, если текст/markup не изменились или сообщение уже удалено.
         pass
 
 # -------- YooKassa --------
@@ -48,22 +47,35 @@ async def start_yookassa(callback, state: FSMContext, bot: Bot) -> None:
     # если уже что-то крутится — гасим и начинаем новое
     await _cancel_checker(callback.from_user.id)
 
-    payment_url, payment_id = create(PRICE_premium, callback.from_user.id)
+    payment_url, payment_id = create(float(PRICE_premium), callback.from_user.id)
+
+    # чтобы текст не был захардкожен на 599
+    price_text = f"{float(PRICE_premium):.2f}"
+
     await _safe_edit_text(
         callback.message,
-        "💳 Оплата на сумму 599.00 ₽\n\nСсылка на оплату действительна в течение 10 минут\nПосле оплаты подписка обновится автоматически.",
-        reply_markup=keyboard_yookassa(payment_url)
+        (
+            f"💳 Оплата на сумму {price_text} ₽\n\n"
+            "Ссылка на оплату действительна в течение 10 минут.\n"
+            "После оплаты подписка обновится автоматически."
+        ),
+        reply_markup=keyboard_yookassa(payment_url),
     )
     await state.set_state(PaymentStates.waiting_for_yookassa)
     await state.update_data(payment_id=payment_id)
 
-    # ЗАПУСК В ФОНЕ (не await!)
     task = asyncio.create_task(
         verify_yookassa(state, bot, callback.from_user.id, callback.from_user.username)
     )
     CHECKERS[callback.from_user.id] = task
 
-async def verify_yookassa(state: FSMContext, bot: Bot, chatid: int, username: Optional[str]) -> bool:
+
+async def verify_yookassa(
+    state: FSMContext,
+    bot: Bot,
+    chatid: int,
+    username: Optional[str],
+) -> bool:
     try:
         user_data = await state.get_data()
         payment_id = user_data.get("payment_id")
@@ -76,7 +88,11 @@ async def verify_yookassa(state: FSMContext, bot: Bot, chatid: int, username: Op
 
             # ❷ подписка уже активна — выходим
             if await get_subscription_until(chatid):
-                await bot.send_message(chatid, "Кажется, Вы уже оплатили подписку", reply_markup=keyboard_sub(chatid))
+                await bot.send_message(
+                    chatid,
+                    "Кажется, Вы уже оплатили подписку",
+                    reply_markup=keyboard_sub(chatid),
+                )
                 return True
 
             # ❸ спрашиваем YooKassa
@@ -88,7 +104,11 @@ async def verify_yookassa(state: FSMContext, bot: Bot, chatid: int, username: Op
             if paid:
                 await state.set_state(PaymentStates.payment_verified)
                 await set_subscription_active(chatid, username, days=30)
-                await bot.send_message(chatid, "✅ Оплата прошла успешно, подписка активирована!", reply_markup=keyboard_subscribe())
+                await bot.send_message(
+                    chatid,
+                    "✅ Оплата прошла успешно, подписка активирована!",
+                    reply_markup=keyboard_subscribe(),
+                )
                 await state.clear()
                 return True
 
@@ -96,99 +116,11 @@ async def verify_yookassa(state: FSMContext, bot: Bot, chatid: int, username: Op
             await asyncio.sleep(SLEEP_SECONDS)
 
         # таймаут
-        await bot.send_message(chatid, "Время оплаты истекло, повторите попытку заново", reply_markup=keyboard_return())
-        await state.clear()
-        return False
-
-    except asyncio.CancelledError:
-        # отменили вручную — молча выходим
-        return False
-    except Exception as e:
-        # уведомление менеджеру — как у вас
-        try:
-            if MANAGER_GROUP and int(MANAGER_GROUP) != 0:
-                await bot.send_message(
-                    MANAGER_GROUP,
-                    text=f"Ошибка {e} с оплатой (YooKassa)\n<b>ID: {chatid}\n@{username}</b>",
-                    parse_mode="HTML"
-                )
-        except Exception:
-            pass
-        return False
-    finally:
-        # снимаем таск из реестра
-        CHECKERS.pop(chatid, None)
-
-# -------- Crypto Bot --------
-
-async def start_cryptobot(callback, state: FSMContext, bot: Bot) -> None:
-    await _cancel_checker(callback.from_user.id)
-
-    # RUB-цена подписки — берём из config (PRICE_premium = "599.0" и т.п.)
-    rub_price = float(PRICE_premium)
-
-    # Пробуем взять живой курс USDT/RUB
-    try:
-        usdt_amount = await get_usdt_amount_for_rub(rub_price)
-    except Exception:
-        # если что-то пошло не так — fallback к старому значению из AMOUNT_premium
-        usdt_amount = float(AMOUNT_premium)
-
-    invoice = await cp.create_invoice(asset=ASSET, amount=usdt_amount)
-    invoice_url = str(getattr(invoice, "bot_invoice_url", invoice))
-    invoice_id = str(getattr(invoice, "invoice_id", ""))
-
-    await _safe_edit_text(
-        callback.message,
-        (
-            f"💸 Оплата на сумму {usdt_amount:.2f} {ASSET} (≈ {rub_price:.2f} ₽)\n\n"
-            "Ссылка на оплату действительна в течение 10 минут.\n"
-            "После оплаты подписка обновится автоматически."
-        ),
-        reply_markup=keyboard_crypto_bot(invoice_url)
-    )
-    await state.set_state(PaymentStates.waiting_for_crypto_bot)
-    await state.update_data(invoice_id=invoice_id)
-
-    task = asyncio.create_task(
-        verify_cryptobot(state, bot, callback.from_user.id, callback.from_user.username)
-    )
-    CHECKERS[callback.from_user.id] = task
-
-
-async def verify_cryptobot(state: FSMContext, bot: Bot, chatid: int, username: Optional[str]) -> bool:
-    try:
-        from payments import cript
-
-        user_data = await state.get_data()
-        invoice_id = user_data.get("invoice_id")
-        attempts = 0
-
-        while attempts < MAX_ATTEMPTS:
-            if (await state.get_state()) != PaymentStates.waiting_for_crypto_bot.state:
-                return False
-
-            if await get_subscription_until(chatid):
-                await bot.send_message(chatid, "Кажется, Вы уже оплатили подписку", reply_markup=keyboard_sub(chatid))
-                return True
-
-            try:
-                res = await cript(invoice_id)
-                paid = (res is True) or (isinstance(res, str) and res.lower() in {"yes", "true", "paid"})
-            except Exception:
-                paid = False
-
-            if paid:
-                await state.set_state(PaymentStates.payment_verified)
-                await set_subscription_active(chatid, username, days=30)
-                await bot.send_message(chatid, "✅ Оплата прошла успешно, подписка активирована!", reply_markup=keyboard_subscribe())
-                await state.clear()
-                return True
-
-            attempts += 1
-            await asyncio.sleep(SLEEP_SECONDS)
-
-        await bot.send_message(chatid, "Время оплаты истекло, повторите попытку заново", reply_markup=keyboard_return())
+        await bot.send_message(
+            chatid,
+            "Время оплаты истекло, повторите попытку заново",
+            reply_markup=keyboard_return(),
+        )
         await state.clear()
         return False
 
@@ -199,8 +131,11 @@ async def verify_cryptobot(state: FSMContext, bot: Bot, chatid: int, username: O
             if MANAGER_GROUP and int(MANAGER_GROUP) != 0:
                 await bot.send_message(
                     MANAGER_GROUP,
-                    text=f"Ошибка {e} с оплатой (Crypto Bot)\n<b>ID: {chatid}\n@{username}</b>",
-                    parse_mode="HTML"
+                    text=(
+                        f"Ошибка {e} с оплатой (YooKassa)\n"
+                        f"<b>ID: {chatid}\n@{username}</b>"
+                    ),
+                    parse_mode="HTML",
                 )
         except Exception:
             pass

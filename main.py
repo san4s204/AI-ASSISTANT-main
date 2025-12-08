@@ -5,7 +5,7 @@ from contextlib import suppress
 import signal
 import os
 from aiogram import Bot, Dispatcher, Router
-from aiosend import CryptoPay, TESTNET
+from aiosend import CryptoPay
 
 from config import TOKEN, CRYPTOTOKEN
 from bot.web.oauth_app import start_oauth_webserver
@@ -21,12 +21,12 @@ from bot.services.limits import RPM_MAP, RPD_MAP, resolve_plan
 # ↑↑↑ NEW ↑↑↑
 
 # === Инициализация ===
-cp = CryptoPay(CRYPTOTOKEN)  # если не используешь здесь — можно удалить
+# cp = CryptoPay(CRYPTOTOKEN)  # если не используешь здесь — можно удалить
 bot = Bot(TOKEN)
 dp = Dispatcher()
 router = Router(name="core")  # если пустой — можно не подключать
 
-# Роутеры
+# Роутеры   
 from bot.routers.start import router as start_router
 from bot.routers.subscription import router as subscription_router
 from bot.routers.payments import router as payments_router
