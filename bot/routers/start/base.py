@@ -28,7 +28,7 @@ async def start_cmd(message: types.Message):
     if res:
         await message.answer(text="Главное меню:", reply_markup=keyboard_sub(uid))
     else:
-        await message.answer(text=welcome_text(), disable_web_page_preview=True)
+        await message.answer(text=welcome_text(), parse_mode="HTML", disable_web_page_preview=True)
         await message.answer(text="Главное меню:", reply_markup=keyboard_unsub())
 
 @router.callback_query(F.data == "return")
