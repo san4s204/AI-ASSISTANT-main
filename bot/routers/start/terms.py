@@ -37,5 +37,5 @@ async def cq_terms_accept(callback: types.CallbackQuery):
         await callback.message.answer(text="Главное меню:", reply_markup=keyboard_sub(uid))
     else:
         await callback.message.answer(text=welcome_text(), disable_web_page_preview=True)
-        await callback.message.answer(text="Главное меню:", reply_markup=keyboard_unsub())
+        await callback.message.answer(text="Главное меню:", parse_mode= "HTML", reply_markup=keyboard_unsub())
     await callback.answer()
