@@ -1,9 +1,9 @@
+from __future__ import annotations
 import json
 import re
 import secrets
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
-from __future__ import annotations
 import logging, os, tempfile, asyncio
 from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode, ChatAction
