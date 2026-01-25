@@ -1,5 +1,6 @@
 # providers/google_calendar_oauth_provider.py
 from __future__ import annotations
+
 from typing import List, Dict, Any, Optional
 import asyncio
 from datetime import datetime, timedelta
@@ -11,16 +12,35 @@ from bot.services.google_oauth import load_user_credentials
 
 DEFAULT_TZ = ZoneInfo("Europe/Berlin")  # можно вынести в .env
 
+
 def _rfc3339(dt: datetime) -> str:
-    # всегда с таймзоной
+    # Google Calendar API ожидает RFC3339 (ISO с tz)
     if dt.tzinfo is None:
-        dt = dt.astimezone()
+        dt = dt.replace(tzinfo=DEFAULT_TZ)
     return dt.isoformat()
 
-async def get_user_timezone_oauth(user_id: int) -> ZoneInfo:
-    """Берём TZ из настроек аккаунта Google; если недоступно — локальная tz процесса."""
+
+def _iso(dt: datetime) -> str:
+    # Google API принимает ISO8601 с таймзоной
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=DEFAULT_TZ)
+    return dt.isoformat()
+
+
+async def _svc(user_id: int):
     creds = await load_user_credentials(user_id)
-    service = build("calendar", "v3", credentials=creds)
+    if creds is None:
+        raise RuntimeError("Google OAuth not connected or expired")
+    # cache_discovery=False — практичнее для прод-окружений/контейнеров
+    return build("calendar", "v3", credentials=creds, cache_discovery=False)
+
+
+async def get_user_timezone_oauth(user_id: int) -> ZoneInfo:
+    """Берём TZ из настроек аккаунта Google; если недоступно — tz процесса."""
+    try:
+        service = await _svc(user_id)
+    except Exception:
+        return datetime.now().astimezone().tzinfo  # fallback
 
     def _get():
         return service.settings().get(setting="timezone").execute()
@@ -30,20 +50,10 @@ async def get_user_timezone_oauth(user_id: int) -> ZoneInfo:
         try:
             return ZoneInfo(tzname)
         except ZoneInfoNotFoundError:
-            return datetime.now().astimezone().tzinfo  # fallback
+            return datetime.now().astimezone().tzinfo
     except Exception:
-        return datetime.now().astimezone().tzinfo  # fallback
+        return datetime.now().astimezone().tzinfo
 
-def _iso(dt: datetime) -> str:
-    # Google API принимает локальный ISO8601 с таймзоной
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=DEFAULT_TZ)
-    return dt.isoformat()
-
-async def _svc(user_id: int):
-    creds = await load_user_credentials(user_id)
-    # v3 — актуальная для Calendar
-    return build("calendar", "v3", credentials=creds)
 
 async def list_upcoming_events_oauth(
     user_id: int,
@@ -88,6 +98,7 @@ async def list_upcoming_events_oauth(
         })
     return result
 
+
 async def create_event_oauth(
     user_id: int,
     *,
@@ -97,7 +108,7 @@ async def create_event_oauth(
     calendar_id: str = "primary",
     description: Optional[str] = None,
     location: Optional[str] = None,
-    attendees: Optional[List[str]] = None,  # список email'ов
+    attendees: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
     Создаёт событие в календаре пользователя. Возвращает созданный объект (включая htmlLink).
@@ -126,15 +137,54 @@ async def create_event_oauth(
 
     return await asyncio.to_thread(_insert)
 
+
+async def update_event_oauth(
+    user_id: int,
+    *,
+    event_id: str,
+    patch: Dict[str, Any],
+    calendar_id: str = "primary",
+) -> Dict[str, Any]:
+    """
+    Частично обновляет событие (PATCH) по event_id.
+    patch — тело, которое вы хотите применить (например start/end/summary/location/description).
+    """
+    service = await _svc(user_id)
+
+    def _patch():
+        return service.events().patch(
+            calendarId=calendar_id,
+            eventId=event_id,
+            body=patch,
+        ).execute()
+
+    return await asyncio.to_thread(_patch)
+
+
+async def delete_event_oauth(
+    user_id: int,
+    *,
+    event_id: str,
+    calendar_id: str = "primary",
+) -> bool:
+    """Удаляет событие по event_id."""
+    service = await _svc(user_id)
+
+    def _delete():
+        service.events().delete(calendarId=calendar_id, eventId=event_id).execute()
+        return True
+
+    return await asyncio.to_thread(_delete)
+
+
 async def list_calendars_oauth(user_id: int) -> List[Dict[str, Any]]:
-    creds = await load_user_credentials(user_id)
-    service = build("calendar", "v3", credentials=creds)
+    service = await _svc(user_id)
 
     def _list():
         return service.calendarList().list().execute()
+
     data = await asyncio.to_thread(_list)
     items = data.get("items", []) or []
-    # Оставим только нужное
     return [
         {
             "id": it.get("id"),
@@ -144,21 +194,21 @@ async def list_calendars_oauth(user_id: int) -> List[Dict[str, Any]]:
         for it in items
     ]
 
+
 async def list_events_between_oauth(
     user_id: int,
     calendar_id: str,
     time_min: datetime,
     time_max: datetime,
 ) -> List[Dict[str, Any]]:
-    creds = await load_user_credentials(user_id)
-    service = build("calendar", "v3", credentials=creds)
+    service = await _svc(user_id)
 
     def _list():
         return service.events().list(
             calendarId=calendar_id,
             timeMin=_rfc3339(time_min),
             timeMax=_rfc3339(time_max),
-            singleEvents=True,       # разворачиваем повторяющиеся
+            singleEvents=True,
             orderBy="startTime",
         ).execute()
 

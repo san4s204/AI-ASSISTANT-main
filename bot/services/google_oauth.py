@@ -7,7 +7,7 @@ import aiosqlite
 from google_auth_oauthlib.flow import Flow
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
-
+import asyncio
 from config import (
     GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, OAUTH_REDIRECT_URI,
     OAUTH_STATE_SECRET, DB_PATH
@@ -155,7 +155,7 @@ async def load_user_credentials(user_id: int) -> Optional[Credentials]:
     # освежим access_token при необходимости
     try:
         if not creds.valid:
-            creds.refresh(Request())
+            await asyncio.to_thread(creds.refresh, Request())
     except Exception:
         # если refresh не удался — считаем, что токен протух
         return None

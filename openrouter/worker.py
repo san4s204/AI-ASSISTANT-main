@@ -1,8 +1,14 @@
+import json
+import re
+import secrets
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from __future__ import annotations
 import logging, os, tempfile, asyncio
 from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode, ChatAction
 from aiogram.client.default import DefaultBotProperties
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import CommandStart
 from googleapiclient.errors import HttpError
 import contextlib
@@ -10,12 +16,15 @@ from hashsss import answer
 from providers.google_calendar_oauth_provider import (
     get_user_timezone_oauth,
     list_events_between_oauth,
+    create_event_oauth,
+    update_event_oauth,
+    delete_event_oauth,
 )
 from bot.services.db import get_user_calendar_id
 from bot.services.token_wallet import ensure_current_wallet, can_spend, debit, rough_token_estimate
 from bot.services.limits import month_token_allowance
 from bot.services.memory import get_memory_history, add_memory_message
-from .calendar_utils import looks_calendar, parse_range_ru, fmt_events
+from .calendar_utils import parse_range_ru, fmt_events
 from . import state
 
 from pathlib import Path
@@ -38,6 +47,97 @@ async def reply(msg: types.Message, *args, **kwargs):
 async def bot_worker(bot_token: str, doc_id: str, owner_id: int) -> None:
     bot = Bot(token=bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
+    pending_calendar: dict[str, dict] = {}  # token -> payload
+
+    DEFAULT_TZ = ZoneInfo("Europe/Berlin")
+
+    CAL_PLAN_SYSTEM_TEMPLATE = """
+    Дополнение: ты должен определить, требуется ли действие с Google Calendar.
+    В конце ответа ОБЯЗАТЕЛЬНО добавь блок:
+
+    <calendar_plan>{{JSON}}</calendar_plan>
+
+    JSON строго валидный (без комментариев). Схема:
+    {{
+    "action": "none" | "list" | "create" | "update" | "delete",
+    "needs_confirmation": true|false,
+    "missing_fields": [строки],
+
+    "range": {{"start": "...", "end": "..."}},  // для list (опционально)
+    "event": {{"summary": "...", "start": "...", "end": "...", "location": null, "description": null}}, // create
+    "match": {{"strategy": "nearest", "range_days": 14, "query": "токены|поиска"}}, // update/delete
+    "patch": {{
+        "start": "...",
+        "end": "...",
+        "shift_minutes": 60,
+        "summary": "...",
+        "location": "...",
+        "description": "..."
+    }} // update
+    }}
+
+    Правила:
+    - Если пользователь не просит показать/создать/перенести/удалить запись — action="none".
+    - Для create/update/delete: needs_confirmation=true.
+    - Времена указывай ISO-8601 с таймзоной {tz}. Сейчас: {now}.
+    - Если пользователь говорит "на час позже/раньше" — используй patch.shift_minutes (например 60 или -60).
+    - Если не хватает данных — заполни missing_fields и НЕ выдумывай.
+    """
+
+    _PLAN_RE = re.compile(r"<calendar_plan>\s*(\{.*?\})\s*</calendar_plan>", re.S)
+
+    def _extract_plan(raw: str) -> tuple[str, dict | None]:
+        txt = str(raw or "")
+        matches = list(_PLAN_RE.finditer(txt))
+        if not matches:
+            return txt.strip(), None
+        m = matches[-1]  # берём последний блок
+        plan_raw = m.group(1)
+        try:
+            plan = json.loads(plan_raw)
+        except Exception:
+            plan = None
+        cleaned = (txt[:m.start()] + txt[m.end():]).strip()
+        return cleaned, plan
+
+    def _parse_iso(s: str) -> datetime | None:
+        try:
+            return datetime.fromisoformat((s or "").replace("Z", "+00:00"))
+        except Exception:
+            return None
+
+    def _kbd_confirm(token: str) -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"cal:ok:{token}"),
+            InlineKeyboardButton(text="❌ Отмена", callback_data=f"cal:no:{token}"),
+        ]])
+
+    def _kbd_pick(token: str, n: int) -> InlineKeyboardMarkup:
+        rows = [[InlineKeyboardButton(text=str(i + 1), callback_data=f"cal:pick:{token}:{i}")] for i in range(n)]
+        rows.append([InlineKeyboardButton(text="❌ Отмена", callback_data=f"cal:no:{token}")])
+        return InlineKeyboardMarkup(inline_keyboard=rows)
+
+    def _event_bounds(ev: dict, tz) -> tuple[datetime | None, datetime | None]:
+        s = (ev.get("start") or {})
+        e = (ev.get("end") or {})
+        s_iso = s.get("dateTime") or s.get("date")
+        e_iso = e.get("dateTime") or e.get("date")
+        start = _parse_iso(s_iso) if s_iso else None
+        end = _parse_iso(e_iso) if e_iso else None
+        # all-day date -> трактуем как 00:00
+        if start and start.tzinfo is None:
+            start = start.replace(tzinfo=tz)
+        if end and end.tzinfo is None:
+            end = end.replace(tzinfo=tz)
+        return start, end
+
+    def _format_candidates(cands: list[dict]) -> str:
+        lines = []
+        for i, ev in enumerate(cands, 1):
+            title = ev.get("summary") or "Без названия"
+            s = (ev.get("start") or {}).get("dateTime") or (ev.get("start") or {}).get("date") or ""
+            lines.append(f"{i}) {title} — {s}")
+        return "\n".join(lines)
 
     info = state.ACTIVE.get(bot_token)
     if info is not None:
@@ -69,6 +169,10 @@ async def bot_worker(bot_token: str, doc_id: str, owner_id: int) -> None:
         await voice_handler(message)    
 
     async def _process_text_query(message: types.Message, text: str):
+        handled_by_calendar = False
+        bot_reply = ""
+        assistant_text_for_debit_and_memory = ""
+        
         if not text.strip():
             return
         
@@ -93,44 +197,74 @@ async def bot_worker(bot_token: str, doc_id: str, owner_id: int) -> None:
             await message.answer("⛔️ Баланс токенов исчерпан. Пополните тариф в «Настройках» или уменьшите запрос.")
             return
 
-        # 2) календарь
-        try:
-            if looks_calendar(text):
-                uid = owner_id
-                cal_id = await get_user_calendar_id(uid) or "primary"
-                tz = await get_user_timezone_oauth(uid)
-                start, end, label = parse_range_ru(text, tz)
-                events = await list_events_between_oauth(uid, cal_id, start, end)
-                if not events:
-                    await message.answer(f"Событий {label} не найдено.")
-                else:
-                    await message.answer(f"События {label}:\n\n{fmt_events(events)}", disable_web_page_preview=True)
-                return
-        except Exception as e:
-            logging.warning("Calendar branch failed: %s", e)
-            await message.answer("⚠️ Не удалось обратиться к Календарю. Проверьте подключение Google и права Calendar.")
+        
 
         # 3) Docs/Sheets + LLM
         try:
-            if not (doc_id or "").strip():
-                await reply(
-                    message,
-                    "ℹ️ Источник знаний не подключён.\nУкажите ссылку/ID Google Doc/Sheet командой /prompt.",
-                    disable_web_page_preview=True,
-                )
-                return
 
             # достаем последние N реплик из памяти
             history = await get_memory_history(owner_id, message.chat.id, limit=10)
+            now = datetime.now(DEFAULT_TZ).isoformat()
+            extra_system = CAL_PLAN_SYSTEM_TEMPLATE.format(now=now, tz=str(DEFAULT_TZ))
 
-            bot_reply = await answer(
+            raw = await answer(
                 text,
                 doc_id,
                 owner_id=owner_id,
                 history=history,
+                extra_system=extra_system,   # ✅ важное отличие
             )
-            if not str(bot_reply).strip():
-                bot_reply = "🤖 (пустой ответ)"
+            if not str(raw).strip():
+                raw = "🤖 (пустой ответ)"
+
+            bot_reply, plan = _extract_plan(str(raw))
+
+            assistant_text_for_debit_and_memory = bot_reply or ""
+
+            if isinstance(plan, dict) and plan.get("action") in {"list", "create", "update", "delete"}:
+                action = plan.get("action")
+                uid = owner_id
+                cal_id = await get_user_calendar_id(uid) or "primary"
+
+                if action == "list":
+                    try:
+                        tz = await get_user_timezone_oauth(uid)
+                    except Exception:
+                        tz = DEFAULT_TZ
+
+                    r = plan.get("range") or {}
+                    start = _parse_iso(r.get("start")) if isinstance(r, dict) else None
+                    end = _parse_iso(r.get("end")) if isinstance(r, dict) else None
+                    if not start or not end:
+                        start, end, _ = parse_range_ru(text, tz)
+
+                    try:
+                        events = await list_events_between_oauth(uid, cal_id, start, end)
+                        out = fmt_events(events)
+                        msg = (bot_reply + "\n\n" if bot_reply else "") + out
+                        await reply(message, msg, disable_web_page_preview=True)
+                        handled_by_calendar = True
+                        assistant_text_for_debit_and_memory = msg
+                    except Exception:
+                        await reply(message, "⚠️ Не удалось обратиться к Календарю. Проверьте подключение Google и права Calendar.")
+                        handled_by_calendar = True
+                        assistant_text_for_debit_and_memory = "⚠️ Не удалось обратиться к Календарю."
+
+                elif action in {"create", "update", "delete"}:
+                    token = secrets.token_urlsafe(8)
+                    pending_calendar[token] = {
+                        "plan": plan,
+                        "uid": uid,
+                        "cal_id": cal_id,
+                        "chat_id": message.chat.id,
+                        "expires_at": datetime.now(timezone.utc) + timedelta(minutes=15),
+                    }
+
+                    prompt = (bot_reply or "").strip() or "Подтвердите действие с календарём."
+                    await reply(message, prompt, reply_markup=_kbd_confirm(token), disable_web_page_preview=True)
+                    handled_by_calendar = True
+                    assistant_text_for_debit_and_memory = prompt
+
         except FileNotFoundError:
             await reply(
                 message,
@@ -155,7 +289,7 @@ async def bot_worker(bot_token: str, doc_id: str, owner_id: int) -> None:
 
         # 4) списание
         try:
-            est = rough_token_estimate(text, bot_reply)
+            est = rough_token_estimate(text, assistant_text_for_debit_and_memory)
             ok = await debit(
                 owner_id,
                 est,
@@ -171,11 +305,215 @@ async def bot_worker(bot_token: str, doc_id: str, owner_id: int) -> None:
         # 5) запись в память диалога
         try:
             await add_memory_message(owner_id, message.chat.id, "user", text)
-            await add_memory_message(owner_id, message.chat.id, "assistant", bot_reply)
+            await add_memory_message(owner_id, message.chat.id, "assistant", assistant_text_for_debit_and_memory)
         except Exception as e:
             logging.warning("add_memory_message failed: %s", e.__class__.__name__)
 
+        if handled_by_calendar:
+            return
+
         await reply(message, bot_reply, disable_web_page_preview=True)
+
+
+    @dp.callback_query(F.data.startswith("cal:"))
+    async def on_calendar_cb(callback: types.CallbackQuery):
+        try:
+            data = callback.data or ""
+            parts = data.split(":")
+            if len(parts) < 3:
+                await callback.answer()
+                return
+
+            op = parts[1]  # ok/no/pick
+            token = parts[2]
+
+            item = pending_calendar.get(token)
+            if not item:
+                await callback.answer("Операция устарела", show_alert=True)
+                return
+
+            if callback.message and callback.message.chat.id != item["chat_id"]:
+                await callback.answer("Недоступно в этом чате", show_alert=True)
+                return
+
+            if datetime.now(timezone.utc) > item["expires_at"]:
+                pending_calendar.pop(token, None)
+                await callback.answer("Истекло время подтверждения", show_alert=True)
+                return
+
+            if op == "no":
+                pending_calendar.pop(token, None)
+                if callback.message:
+                    await callback.message.answer("Ок, отменено.")
+                await callback.answer()
+                return
+
+            uid = item["uid"]
+            cal_id = item["cal_id"]
+            plan = item["plan"]
+            act = plan.get("action")
+
+            # pick: пользователь выбирает одно событие из кандидатов
+            if op == "pick" and len(parts) == 4:
+                idx = int(parts[3])
+                cands = item.get("candidates") or []
+                if idx < 0 or idx >= len(cands):
+                    await callback.answer("Неверный выбор", show_alert=True)
+                    return
+                chosen = cands[idx]
+                event_id = chosen.get("id")
+
+                tz = await get_user_timezone_oauth(uid)
+
+                if act == "delete":
+                    ok = await delete_event_oauth(uid, event_id=event_id, calendar_id=cal_id)
+                    pending_calendar.pop(token, None)
+                    await callback.message.answer("✅ Событие удалено." if ok else "⚠️ Не удалось удалить событие.")
+                    await callback.answer()
+                    return
+
+                if act == "update":
+                    patch = plan.get("patch") or {}
+                    patch_body: dict = {}
+
+                    # 1) shift_minutes (универсально для "на час позже")
+                    shift = patch.get("shift_minutes")
+                    if isinstance(shift, (int, float)):
+                        old_s, old_e = _event_bounds(chosen, tz)
+                        if old_s and old_e and old_e > old_s:
+                            new_s = old_s + timedelta(minutes=float(shift))
+                            new_e = old_e + timedelta(minutes=float(shift))
+                            patch_body["start"] = {"dateTime": new_s.isoformat(), "timeZone": tz.key}
+                            patch_body["end"] = {"dateTime": new_e.isoformat(), "timeZone": tz.key}
+
+                    # 2) абсолютные start/end (если заданы)
+                    new_start = _parse_iso(patch.get("start")) if patch.get("start") else None
+                    new_end = _parse_iso(patch.get("end")) if patch.get("end") else None
+                    if new_start:
+                        old_s, old_e = _event_bounds(chosen, tz)
+                        if new_end is None and old_s and old_e and old_e > old_s:
+                            new_end = new_start + (old_e - old_s)
+                        if new_end:
+                            patch_body["start"] = {"dateTime": new_start.isoformat(), "timeZone": tz.key}
+                            patch_body["end"] = {"dateTime": new_end.isoformat(), "timeZone": tz.key}
+
+                    for k in ("summary", "location", "description"):
+                        if k in patch and patch[k] is not None:
+                            patch_body[k] = patch[k]
+
+                    if not patch_body:
+                        pending_calendar.pop(token, None)
+                        await callback.message.answer("Не вижу, что именно менять. Уточните новые детали.")
+                        await callback.answer()
+                        return
+
+                    updated = await update_event_oauth(uid, event_id=event_id, patch=patch_body, calendar_id=cal_id)
+                    pending_calendar.pop(token, None)
+                    link = updated.get("htmlLink")
+                    msg = "✅ Событие обновлено."
+                    if link:
+                        msg += f"\n{link}"
+                    await callback.message.answer(msg, disable_web_page_preview=True)
+                    await callback.answer()
+                    return
+
+                await callback.answer()
+                return
+
+            # ok: подтверждение операции
+            if op == "ok":
+                # CREATE
+                if act == "create":
+                    ev = plan.get("event") or {}
+                    summary = (ev.get("summary") or "").strip()
+                    start = _parse_iso(ev.get("start"))
+                    end = _parse_iso(ev.get("end"))
+
+                    if not summary or not start or not end:
+                        pending_calendar.pop(token, None)
+                        await callback.message.answer("Не хватает данных для записи. Уточните дату/время/услугу.")
+                        await callback.answer()
+                        return
+
+                    created = await create_event_oauth(
+                        uid,
+                        summary=summary,
+                        start=start,
+                        end=end,
+                        calendar_id=cal_id,
+                        description=ev.get("description"),
+                        location=ev.get("location"),
+                    )
+                    pending_calendar.pop(token, None)
+                    link = created.get("htmlLink")
+                    msg = "✅ Запись создана."
+                    if link:
+                        msg += f"\n{link}"
+                    await callback.message.answer(msg, disable_web_page_preview=True)
+                    await callback.answer()
+                    return
+
+                # UPDATE/DELETE -> сначала ищем кандидатов, если >1 — просим выбрать
+                if act in {"update", "delete"}:
+                    tz = await get_user_timezone_oauth(uid)
+                    match = plan.get("match") or {}
+                    range_days = int(match.get("range_days") or 14)
+                    q = str(match.get("query") or "").lower().strip()
+                    tokens = [t for t in re.split(r"[|,\s]+", q) if t]
+
+                    start = datetime.now(tz)
+                    end = start + timedelta(days=range_days)
+
+                    events = await list_events_between_oauth(uid, cal_id, start, end)
+
+                    def _fits(ev: dict) -> bool:
+                        if not tokens:
+                            return True
+                        title = (ev.get("summary") or "").lower()
+                        return any(t in title for t in tokens)
+
+                    cands = [ev for ev in (events or []) if _fits(ev)]
+                    cands.sort(key=lambda ev: _event_bounds(ev, tz)[0] or datetime.max.replace(tzinfo=timezone.utc))
+                    cands = cands[:5]
+
+                    if not cands:
+                        pending_calendar.pop(token, None)
+                        await callback.message.answer("Не нашёл подходящее событие. Уточните дату/время/название.")
+                        await callback.answer()
+                        return
+
+                    if len(cands) == 1:
+                        # сразу исполняем через pick-ветку
+                        item["candidates"] = cands
+                        pending_calendar[token] = item
+                        await callback.message.answer(
+                            "Нашёл одно событие, применяю…",
+                            disable_web_page_preview=True,
+                        )
+                        # симулировать callback не будем — просто попросим нажать 1
+                        await callback.message.answer(
+                            "Подтвердите выбор события: 1",
+                            reply_markup=_kbd_pick(token, 1),
+                            disable_web_page_preview=True,
+                        )
+                        await callback.answer()
+                        return
+
+                    item["candidates"] = cands
+                    pending_calendar[token] = item
+                    await callback.message.answer(
+                        "Какое событие выбрать?\n\n" + _format_candidates(cands),
+                        reply_markup=_kbd_pick(token, len(cands)),
+                        disable_web_page_preview=True,
+                    )
+                    await callback.answer()
+                    return
+
+            await callback.answer()
+
+        except Exception:
+            with contextlib.suppress(Exception):
+                await callback.answer("Ошибка при обработке", show_alert=True)
 
     @dp.message(CommandStart())
     async def start_handler(message: types.Message):

@@ -1,4 +1,5 @@
 # hashsss.py
+
 from __future__ import annotations
 from typing import Optional
 import os
@@ -13,17 +14,16 @@ from deepseek import doc
 import logging
 logging.basicConfig(level=logging.INFO)
 
-
 load_dotenv(override=True)
 
 OPEN_ROUTER_API_KEY = os.getenv("OPEN_ROUTER_API_KEY") or os.getenv("OR_API_KEY")
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-OPENROUTER_REFERER = os.getenv("OPENROUTER_REFERER")
-OPENROUTER_TITLE = os.getenv("OPENROUTER_TITLE")
-
+OPENROUTER_REFERER = os.getenv("OPEN_ROUTER_REFERER")
+OPENROUTER_TITLE = os.getenv("OPEN_ROUTER_TITLE")
 
 MODEL = "anthropic/claude-3.5-sonnet"
 TTL_SECONDS = 3600  # 1 час
+
 
 def _md5(s: str) -> str:
     return hashlib.md5(s.encode("utf-8")).hexdigest()
@@ -31,7 +31,20 @@ def _md5(s: str) -> str:
 def _system_hash(system_content: str) -> str:
     return _md5(system_content)[:16]
 
-def build_system_prompt(ans: dict) -> str:
+
+def build_system_prompt(ans: dict | None) -> str:
+    """
+    ans может быть None, если doc_id не задан или источник недоступен.
+    """
+    if not ans:
+        # fallback system prompt без каталога
+        return (
+            "Ты ИИ-менеджер. Если у тебя нет данных каталога/услуг, честно скажи, что источник знаний не подключён/недоступен, "
+            "и предложи пользователю подключить Google Doc/Sheet через /prompt. "
+            "Не выдумывай услуги, цены и условия.\n"
+            "Отвечай по-русски, дружелюбно и профессионально, без воды. 1–4 предложения."
+        )
+
     kind = ans.get("kind", "doc")
     title = ans.get("title", "")
     content = ans.get("content", "")
@@ -59,48 +72,53 @@ def build_system_prompt(ans: dict) -> str:
         f"--- КОНЕЦ ДАННЫХ ---"
     )
 
-async def answer(text: str, doc_id: str, owner_id: int | None = None, history: list[tuple[str, str]] | None = None) -> str:
-    # 0) нет источника — сразу дружелюбный ответ
-    if not (doc_id or "").strip():
-        return (
-            "ℹ️ Источник знаний не подключён.\n\n"
-            "Отправьте ссылку/ID Google Doc или Sheet командой /prompt, "
-            "или добавьте документ в настройках."
-        )
 
-    try:
-        ans = await doc(doc_id, owner_user_id=owner_id)  # {'id','title','content','kind'}
-    except FileNotFoundError:
-        return (
-            "⚠️ Документ/таблица не найдены или нет доступа.\n"
-            "Проверьте ссылку/ID и права общего доступа (как минимум «Просмотр по ссылке»), затем попробуйте снова."
-        )
-    except Exception as e:
-        # любые прочие ошибки Google/сетевые — коротко
-        return f"⚠️ Ошибка при чтении источника: {e.__class__.__name__}. Попробуйте позже."
+async def answer(
+    text: str,
+    doc_id: str,
+    owner_id: int | None = None,
+    history: list[tuple[str, str]] | None = None,
+    extra_system: str | None = None,   # ✅ добавили
+) -> str:
+    ans = None
+    source_error = None
+
+    # ✅ больше НЕ делаем ранний return при пустом doc_id
+    if (doc_id or "").strip():
+        try:
+            ans = await doc(doc_id, owner_user_id=owner_id)  # {'id','title','content','kind'}
+        except FileNotFoundError:
+            source_error = "Документ/таблица не найдены или нет доступа."
+        except Exception as e:
+            source_error = f"Ошибка чтения источника: {e.__class__.__name__}"
 
     system_content = build_system_prompt(ans)
-    logging.info(
-        "system_prompt kind=%s title=%r len=%d head=%r",
-        ans.get("kind"), ans.get("title"), len(system_content),
-        system_content[:160].replace("\n", " ")
-    )
+
+    if source_error:
+        system_content += (
+            "\n\nВАЖНО: Источник знаний сейчас недоступен: "
+            f"{source_error} "
+            "Если вопрос пользователя требует данных из источника — честно сообщи об этом."
+        )
+
+    # ✅ добавляем системные инструкции календаря (если передали)
+    if extra_system and extra_system.strip():
+        system_content += "\n\n" + extra_system.strip()
 
     sys_hash = _system_hash(system_content)
+
     # --- КЭШ ТОЛЬКО БЕЗ ИСТОРИИ ---
     cache_key = None
     if not history:
-        cache_key = f"openrouter:{doc_id}:{sys_hash}:{_md5(text)}"
+        doc_key = (doc_id or "").strip() or "no-doc"
+        cache_key = f"openrouter:{doc_key}:{sys_hash}:{_md5(text)}"
         cached = await cache_get(cache_key)
         if cached is not None:
             return cached
     # --- конец блока кэша ---
 
     if not OPEN_ROUTER_API_KEY:
-        raise RuntimeError(
-            "OPEN_ROUTER_API_KEY is not set (add it to .env). "
-            "Get a key at https://openrouter.ai/keys"
-        )
+        raise RuntimeError("OPEN_ROUTER_API_KEY is not set (add it to .env).")
 
     messages = [{"role": "system", "content": system_content}]
 
@@ -138,17 +156,7 @@ async def answer(text: str, doc_id: str, owner_id: int | None = None, history: l
             except Exception:
                 raise RuntimeError(f"Unexpected OpenRouter response shape: {data}")
 
-    # кэшируем только если cache_key есть (т.е. нет history)
     if cache_key:
         await cache_setex(cache_key, TTL_SECONDS, result)
 
     return result
-
-# Для очистки кэша
-async def clean(system_hash: str, doc_id: Optional[str] = None) -> int:
-    """
-    Удаляет кэш по системному промпту.
-    Если указан doc_id — чистим только его ключи.
-    """
-    pattern = f"openrouter:{doc_id}:{system_hash}:*" if doc_id else f"openrouter:*:{system_hash}:*"
-    return await delete_by_pattern(pattern)
