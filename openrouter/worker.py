@@ -283,7 +283,7 @@ async def bot_worker(bot_token: str, doc_id: str, owner_id: int) -> None:
             )
             return
         except Exception as e:
-            logging.error("answer() failed: %s", e.__class__.__name__, exc_info=False)
+            logging.exception("answer() failed: %s", e)
             await reply(message, "⚠️ Ошибка при обращении к модели. Попробуйте позже.")
             return
 
