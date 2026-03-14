@@ -21,7 +21,7 @@ OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_REFERER = os.getenv("OPEN_ROUTER_REFERER")
 OPENROUTER_TITLE = os.getenv("OPEN_ROUTER_TITLE")
 
-MODEL = "anthropic/claude-3.5-sonnet"
+MODEL = "openai/gpt-5.4-pro"
 TTL_SECONDS = 3600  # 1 час
 
 
