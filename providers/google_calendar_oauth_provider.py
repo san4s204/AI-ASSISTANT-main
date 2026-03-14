@@ -10,7 +10,7 @@ from googleapiclient.discovery import build
 
 from bot.services.google_oauth import load_user_credentials
 
-DEFAULT_TZ = ZoneInfo("Europe/Berlin")  # можно вынести в .env
+DEFAULT_TZ = ZoneInfo("Europe/Moscow")  # можно вынести в .env
 
 
 def _rfc3339(dt: datetime) -> str:
@@ -109,6 +109,7 @@ async def create_event_oauth(
     description: Optional[str] = None,
     location: Optional[str] = None,
     attendees: Optional[List[str]] = None,
+    private_props: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """
     Создаёт событие в календаре пользователя. Возвращает созданный объект (включая htmlLink).
@@ -129,6 +130,9 @@ async def create_event_oauth(
         body["location"] = location
     if attendees:
         body["attendees"] = [{"email": e} for e in attendees]
+
+    if private_props:
+        body["extendedProperties"] = {"private": private_props}
 
     service = await _svc(user_id)
 
@@ -200,16 +204,27 @@ async def list_events_between_oauth(
     calendar_id: str,
     time_min: datetime,
     time_max: datetime,
+    private_extended_property: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     service = await _svc(user_id)
 
     def _list():
+        req = service.events().list(
+            calendarId=calendar_id,
+            timeMin=_rfc3339(time_min),
+            timeMax=_rfc3339(time_max),
+            singleEvents=True,
+            orderBy="startTime",
+        )
+        if private_extended_property:
+            req.uri = req.uri  # no-op, просто чтобы видно было, что req уже есть
         return service.events().list(
             calendarId=calendar_id,
             timeMin=_rfc3339(time_min),
             timeMax=_rfc3339(time_max),
             singleEvents=True,
             orderBy="startTime",
+            privateExtendedProperty=private_extended_property,
         ).execute()
 
     data = await asyncio.to_thread(_list)

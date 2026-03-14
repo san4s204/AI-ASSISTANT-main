@@ -49,7 +49,7 @@ async def bot_worker(bot_token: str, doc_id: str, owner_id: int) -> None:
     dp = Dispatcher()
     pending_calendar: dict[str, dict] = {}  # token -> payload
 
-    DEFAULT_TZ = ZoneInfo("Europe/Berlin")
+    DEFAULT_TZ = ZoneInfo("Europe/Moscow")
 
     CAL_PLAN_SYSTEM_TEMPLATE = """
     Дополнение: ты должен определить, требуется ли действие с Google Calendar.
@@ -239,7 +239,7 @@ async def bot_worker(bot_token: str, doc_id: str, owner_id: int) -> None:
                         start, end, _ = parse_range_ru(text, tz)
 
                     try:
-                        events = await list_events_between_oauth(uid, cal_id, start, end)
+                        events = await list_events_between_oauth(uid, cal_id, start, end, private_extended_property=[f"client_chat_id={message.chat.id}"],)
                         out = fmt_events(events)
                         msg = (bot_reply + "\n\n" if bot_reply else "") + out
                         await reply(message, msg, disable_web_page_preview=True)
@@ -443,6 +443,11 @@ async def bot_worker(bot_token: str, doc_id: str, owner_id: int) -> None:
                         calendar_id=cal_id,
                         description=ev.get("description"),
                         location=ev.get("location"),
+                        private_props={
+                            "client_chat_id": str(callback.message.chat.id),
+                            "client_user_id": str(callback.from_user.id),
+                            "source": "telegram_bot",
+                        },
                     )
                     pending_calendar.pop(token, None)
                     link = created.get("htmlLink")
