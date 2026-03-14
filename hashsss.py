@@ -20,7 +20,7 @@ OPEN_ROUTER_API_KEY = os.getenv("OPEN_ROUTER_API_KEY") or os.getenv("OR_API_KEY"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_REFERER = os.getenv("OPEN_ROUTER_REFERER")
 OPENROUTER_TITLE = os.getenv("OPEN_ROUTER_TITLE")
-
+MAX_OUTPUT_TOKENS = int(os.getenv("OPENROUTER_MAX_TOKENS", "1500"))
 MODEL = "openai/gpt-5.4-pro"
 TTL_SECONDS = 3600  # 1 час
 
@@ -132,7 +132,7 @@ async def answer(
 
     messages.append({"role": "user", "content": text})
 
-    payload = {"model": MODEL, "messages": messages}
+    payload = {"model": MODEL, "messages": messages, "max_tokens": MAX_OUTPUT_TOKENS}
     headers = {
         "Authorization": f"Bearer {OPEN_ROUTER_API_KEY}",
         "Content-Type": "application/json",
