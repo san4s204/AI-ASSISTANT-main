@@ -3,6 +3,7 @@ import sqlite3
 from aiogram.types import KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
 from config import MANAGER_URL, CRYPTO_ENABLED
+from config import DB_PATH
 
 # ---------------- Reply keyboards ----------------
 CB_CANCEL = "pay_cancel"
@@ -162,7 +163,7 @@ def state_bot(user_id: int) -> str:
     В случае ошибки — безопасно возвращаем «выключен».
     """
     try:
-        conn = sqlite3.connect("db.db")
+        conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         row = cursor.execute(
             "SELECT state_bot FROM users WHERE id = ?",

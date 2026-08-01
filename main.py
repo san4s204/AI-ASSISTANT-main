@@ -2,27 +2,23 @@
 import asyncio
 import logging
 from contextlib import suppress
-import signal
 import os
 from aiogram import Bot, Dispatcher, Router
-from aiosend import CryptoPay
 
-from config import TOKEN, CRYPTOTOKEN
+from config import TOKEN
 from bot.web.oauth_app import start_oauth_webserver
 
 # Необязательно, но полезно: фоновая задача, которая гасит истёкшие подписки
 # Если файла нет — можно временно закомментировать импорт и запуск.
 from bot.services.subscription import subscription_expirer
 from bot.services.token_wallet import ensure_tables
+from bot.services.db import ensure_database
 # ↓↓↓ NEW: импорты для лимитов ↓↓↓
 from middlewares.rate_limit import parse_admins, RateLimitMiddleware
-from providers.redis_provider import get_redis
+from providers.redis_provider import close_redis, get_redis
 from bot.services.limits import RPM_MAP, RPD_MAP, resolve_plan
 # ↑↑↑ NEW ↑↑↑
 
-# === Инициализация ===
-# cp = CryptoPay(CRYPTOTOKEN)  # если не используешь здесь — можно удалить
-bot = Bot(TOKEN)
 dp = Dispatcher()
 router = Router(name="core")  # если пустой — можно не подключать
 
@@ -48,6 +44,10 @@ async def _run():
     """
     oauth_runner = None
     tasks: list[asyncio.Task] = []
+    if not TOKEN:
+        raise RuntimeError("BOT_TOKEN is not configured")
+    bot = Bot(TOKEN)
+
     admin_ids = parse_admins(os.getenv("ADMIN_IDS", ""))  # пример: "123,456"
     limiter = RateLimitMiddleware(
         redis=get_redis(),
@@ -58,26 +58,13 @@ async def _run():
         metric_prefix="rl-main",
     )
     dp.message.middleware(limiter)
-    # перехват сигналов (на Windows SIGTERM может быть недоступен — игнорируем)
-    stop_event = asyncio.Event()
-
-    
-
-    def _stop():
-        stop_event.set()
-
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        with suppress(NotImplementedError):
-            loop.add_signal_handler(sig, _stop)
 
     try:
-        # 0) Инициализация таблиц кошелька
-        try:
-            await ensure_tables()
-            logging.info("Token wallet tables are ready")
-        except Exception:
-            logging.exception("Failed to ensure token_wallet tables")
+        # 0) Инициализация всей схемы. Ошибка здесь фатальна: без БД
+        # обработчики всё равно не смогут работать корректно.
+        await ensure_database()
+        await ensure_tables()
+        logging.info("Database tables are ready")
 
         # 2) OAuth веб-сервер
         try:
@@ -125,6 +112,8 @@ async def _run():
             await dp.storage.close()      # если используется FSM хранилище
         with suppress(Exception):
             await bot.session.close()
+        with suppress(Exception):
+            await close_redis()
 
         logging.info("Shutdown complete.")
 

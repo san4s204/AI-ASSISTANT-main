@@ -7,6 +7,75 @@ from typing import Iterable
 
 DB_PATH = os.getenv("DB_PATH", "db.db")
 
+
+async def ensure_database() -> None:
+    """Создаёт базовую схему для нового инстанса без ручных SQL-команд."""
+    async with aiosqlite.connect(DB_PATH) as conn:
+        await conn.executescript(
+            """
+            PRAGMA journal_mode=WAL;
+            PRAGMA foreign_keys=ON;
+            PRAGMA busy_timeout=5000;
+
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY,
+                username TEXT,
+                subscribe TEXT,
+                date_end TEXT,
+                state_bot TEXT NOT NULL DEFAULT 'stop',
+                bot_token TEXT,
+                word_file TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS user_terms (
+                user_id INTEGER PRIMARY KEY,
+                accepted_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS user_prefs (
+                user_id INTEGER PRIMARY KEY,
+                calendar_id TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS google_tokens (
+                user_id INTEGER PRIMARY KEY,
+                refresh_token TEXT NOT NULL,
+                scopes TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS chat_memory (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                owner_id INTEGER NOT NULL,
+                chat_id INTEGER NOT NULL,
+                role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+                content TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_chat_memory_owner_chat_id
+                ON chat_memory(owner_id, chat_id, id DESC);
+            """
+        )
+
+        # Старые базы могли иметь неполную таблицу users. ADD COLUMN безопасно
+        # выполняем только для отсутствующих полей.
+        async with conn.execute("PRAGMA table_info(users)") as cursor:
+            existing = {str(row[1]).lower() for row in await cursor.fetchall()}
+        required_columns = {
+            "username": "TEXT",
+            "subscribe": "TEXT",
+            "date_end": "TEXT",
+            "state_bot": "TEXT NOT NULL DEFAULT 'stop'",
+            "bot_token": "TEXT",
+            "word_file": "TEXT",
+        }
+        for name, definition in required_columns.items():
+            if name not in existing:
+                await conn.execute(
+                    f'ALTER TABLE users ADD COLUMN "{name}" {definition}'
+                )
+        await conn.commit()
+
 def _format_subscription(dt: datetime.datetime) -> str:
     # Прежний формат: HH:MM:SS DD:MM:YYYY
     return dt.strftime("%H:%M:%S ⌛️ %d.%m.%Y")
@@ -187,13 +256,13 @@ async def _ensure_terms_table(conn):
     """)
 
 async def has_accepted_terms(user_id: int) -> bool:
-    async with aiosqlite.connect("db.db") as conn:
+    async with aiosqlite.connect(DB_PATH) as conn:
         await _ensure_terms_table(conn)
         async with conn.execute("SELECT 1 FROM user_terms WHERE user_id=?", (user_id,)) as cur:
             return (await cur.fetchone()) is not None
 
 async def set_terms_accepted(user_id: int) -> None:
-    async with aiosqlite.connect("db.db") as conn:
+    async with aiosqlite.connect(DB_PATH) as conn:
         await _ensure_terms_table(conn)
         await conn.execute(
             "INSERT OR REPLACE INTO user_terms(user_id, accepted_at) VALUES(?, ?)",

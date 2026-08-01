@@ -1,22 +1,23 @@
 from __future__ import annotations
-import json
+
 import datetime as dt
+import json
+
 import aiosqlite
-from typing import Optional, Tuple
 
 # Берём путь к базе из существующего сервиса, чтобы всё писалось в тот же db.db
-from bot.services.db import DB_PATH  # noqa: F401
+from bot.services.db import DB_PATH
 
 # === Вспомогательные даты ===
-def _month_bounds(now: Optional[dt.datetime] = None) -> tuple[str, str]:
-    now = now or dt.datetime.now()
+def _month_bounds(now: dt.datetime | None = None) -> tuple[str, str]:
+    now = now or dt.datetime.now(dt.timezone.utc)
     start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     # вычисляем первый день следующего месяца
     y, m = start.year, start.month
     if m == 12:
-        nxt = dt.datetime(y + 1, 1, 1)
+        nxt = dt.datetime(y + 1, 1, 1, tzinfo=start.tzinfo)
     else:
-        nxt = dt.datetime(y, m + 1, 1)
+        nxt = dt.datetime(y, m + 1, 1, tzinfo=start.tzinfo)
     return start.isoformat(), nxt.isoformat()
 
 # === Инициализация таблиц (одноразово на старте) ===
@@ -58,12 +59,18 @@ async def ensure_current_wallet(user_id: int, allowance_tokens: int) -> None:
             period_start = excluded.period_start,
             period_end   = excluded.period_end,
             allowance_tokens = excluded.allowance_tokens,
+            spent_tokens = CASE
+                WHEN token_wallets.period_start <> excluded.period_start
+                  OR token_wallets.period_end <> excluded.period_end
+                THEN 0
+                ELSE token_wallets.spent_tokens
+            END,
             status = 'active',
             updated_at = datetime('now')
         """, (user_id, p_start, p_end, int(allowance_tokens)))
         await conn.commit()
 
-async def get_balance(user_id: int) -> Tuple[int, int, int]:
+async def get_balance(user_id: int) -> tuple[int, int, int]:
     """return (allowance, spent, remaining)"""
     async with aiosqlite.connect(DB_PATH) as conn:
         async with conn.execute("SELECT allowance_tokens, spent_tokens FROM token_wallets WHERE user_id=?",
@@ -81,7 +88,13 @@ async def can_spend(user_id: int, tokens: int) -> bool:
         return False
     return (spent + int(tokens)) <= allowance
 
-async def debit(user_id: int, tokens: int, reason: str = "llm", request_id: Optional[str] = None, meta: Optional[dict] = None) -> bool:
+async def debit(
+    user_id: int,
+    tokens: int,
+    reason: str = "llm",
+    request_id: str | None = None,
+    meta: dict | None = None,
+) -> bool:
     """Атомарное списание. Вернёт True, если уложились в лимит."""
     tokens = int(tokens)
     async with aiosqlite.connect(DB_PATH) as conn:
@@ -107,7 +120,7 @@ async def debit(user_id: int, tokens: int, reason: str = "llm", request_id: Opti
 
 # Ненавязчивая грубая оценка токенов (пока нет usage из OpenRouter).
 # При желании заменим на реальное значение.
-def rough_token_estimate(prompt: str, completion: Optional[str]) -> int:
+def rough_token_estimate(prompt: str, completion: str | None) -> int:
     # эмпирика: ~1 токен ≈ 4 символа (для RU/EN в среднем)
     p = len(prompt or "") // 4
     c = len(completion or "") // 4
