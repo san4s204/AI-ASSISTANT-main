@@ -17,12 +17,20 @@ except Exception as e:
     sys.exit(1)
 
 # 2) Required env vars presence (non-strict)
-required = ["BOT_TOKEN", "YOOKASSA_ACCOUNT_ID", "YOOKASSA_SECRET_KEY", "CRYPTO_TOKEN"]
+required = ["BOT_TOKEN", "YOOKASSA_ACCOUNT_ID", "YOOKASSA_SECRET_KEY"]
+if os.getenv("CRYPTO_ENABLED", "0") == "1":
+    required.append("CRYPTO_TOKEN")
 missing = [k for k in required if not os.getenv(k)]
 if missing:
     warn(f"В .env отсутствуют/пустые: {missing}")
 else:
     ok("Ключевые переменные окружения присутствуют")
+
+llm_key = os.getenv("LLM_API_KEY") or os.getenv("OPEN_ROUTER_API_KEY") or os.getenv("OR_API_KEY")
+if llm_key:
+    ok(f"LLM API-ключ задан; модель: {os.getenv('LLM_MODEL', 'openai/gpt-5.4-mini')}")
+else:
+    fail("Не задан LLM_API_KEY/OPEN_ROUTER_API_KEY")
 
 # 3) Redis connectivity
 async def check_redis():
@@ -34,6 +42,34 @@ async def check_redis():
         ok(f"Redis доступен (PING={pong})")
     except Exception as e:
         fail(f"Redis недоступен: {e}")
+
+
+async def check_openrouter_auth():
+    key = os.getenv("LLM_API_KEY") or os.getenv("OPEN_ROUTER_API_KEY") or os.getenv("OR_API_KEY")
+    api_url = os.getenv("LLM_API_URL") or os.getenv("OPENROUTER_URL") or "https://openrouter.ai/api/v1/chat/completions"
+    if not key or "openrouter.ai" not in api_url:
+        return
+    try:
+        import aiohttp
+
+        timeout = aiohttp.ClientTimeout(total=15)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(
+                "https://openrouter.ai/api/v1/key",
+                headers={"Authorization": f"Bearer {key}"},
+            ) as response:
+                payload = await response.json(content_type=None)
+                if response.status == 200:
+                    data = payload.get("data") if isinstance(payload, dict) else None
+                    remaining = data.get("limit_remaining") if isinstance(data, dict) else None
+                    suffix = f", доступный лимит: {remaining}" if remaining is not None else ""
+                    ok(f"OpenRouter API-ключ действителен{suffix}")
+                elif response.status == 401:
+                    fail("OpenRouter отклонил API-ключ (401): ключ неверный или отозван")
+                else:
+                    fail(f"OpenRouter проверка ключа вернула HTTP {response.status}: {payload}")
+    except Exception as e:
+        fail(f"Не удалось проверить OpenRouter API-ключ: {e.__class__.__name__}: {e}")
 
 # 4) Google Docs client and service account file
 def check_google():
@@ -66,6 +102,7 @@ async def main():
     check_imports()
     check_google()
     await check_redis()
+    await check_openrouter_auth()
     ok("Диагностика завершена")
 
 if __name__ == "__main__":

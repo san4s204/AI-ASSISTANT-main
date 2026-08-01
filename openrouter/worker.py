@@ -13,6 +13,7 @@ from aiogram.filters import CommandStart
 from googleapiclient.errors import HttpError
 import contextlib
 from hashsss import answer
+from providers.llm_provider import LLMProviderError
 from providers.google_calendar_oauth_provider import (
     get_user_timezone_oauth,
     list_events_between_oauth,
@@ -207,13 +208,14 @@ async def bot_worker(bot_token: str, doc_id: str, owner_id: int) -> None:
             now = datetime.now(DEFAULT_TZ).isoformat()
             extra_system = CAL_PLAN_SYSTEM_TEMPLATE.format(now=now, tz=str(DEFAULT_TZ))
 
-            raw = await answer(
+            llm_response = await answer(
                 text,
                 doc_id,
                 owner_id=owner_id,
                 history=history,
-                extra_system=extra_system,   # ✅ важное отличие
+                extra_system=extra_system,
             )
+            raw = llm_response.text
             if not str(raw).strip():
                 raw = "🤖 (пустой ответ)"
 
@@ -282,6 +284,29 @@ async def bot_worker(bot_token: str, doc_id: str, owner_id: int) -> None:
                 disable_web_page_preview=True,
             )
             return
+        except LLMProviderError as e:
+            logging.error(
+                "LLM request failed: status=%s type=%s retryable=%s message=%s",
+                e.status,
+                e.error_type,
+                e.retryable,
+                e,
+            )
+            if e.error_type == "authentication" or e.status == 401:
+                message_text = "⚠️ ИИ временно недоступен: ключ доступа требует обновления."
+            elif e.error_type == "payment_required" or e.status == 402:
+                message_text = "⚠️ ИИ временно недоступен: закончился баланс провайдера."
+            elif e.error_type in {
+                "rate_limit_exceeded",
+                "provider_overloaded",
+                "provider_unavailable",
+                "timeout",
+            } or e.status in {408, 429, 502, 503, 504}:
+                message_text = "⚠️ Модель перегружена. Попробуйте ещё раз через минуту."
+            else:
+                message_text = "⚠️ Ошибка при обращении к модели. Попробуйте позже."
+            await reply(message, message_text)
+            return
         except Exception as e:
             logging.exception("answer() failed: %s", e)
             await reply(message, "⚠️ Ошибка при обращении к модели. Попробуйте позже.")
@@ -289,16 +314,26 @@ async def bot_worker(bot_token: str, doc_id: str, owner_id: int) -> None:
 
         # 4) списание
         try:
-            est = rough_token_estimate(text, assistant_text_for_debit_and_memory)
-            ok = await debit(
-                owner_id,
-                est,
-                reason="llm-child-echo",
-                request_id=str(message.message_id),
-                meta={"bot_chat_id": message.chat.id},
+            actual_tokens = llm_response.usage.total_tokens
+            tokens_to_debit = actual_tokens or rough_token_estimate(
+                text,
+                assistant_text_for_debit_and_memory,
             )
-            if not ok:
-                await reply(message, "ℹ️ Достигнут лимит токенов на месяц.")
+            if not llm_response.cached:
+                ok = await debit(
+                    owner_id,
+                    tokens_to_debit,
+                    reason="llm-child-echo",
+                    request_id=str(message.message_id),
+                    meta={
+                        "bot_chat_id": message.chat.id,
+                        "model": llm_response.model,
+                        "provider": llm_response.provider,
+                        "cost": llm_response.usage.cost,
+                    },
+                )
+                if not ok:
+                    await reply(message, "ℹ️ Достигнут лимит токенов на месяц.")
         except Exception as e:
             logging.warning("debit failed: %s", e.__class__.__name__)
 

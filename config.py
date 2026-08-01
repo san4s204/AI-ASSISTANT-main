@@ -14,9 +14,7 @@ MANAGER_GROUP = int(os.getenv("MANAGER_GROUP", "0"))
 # === Crypto Bot (CryptoPay / aiosend) ===
 ASSET = os.getenv("CRYPTO_ASSET", "USDT")
 CRYPTOTOKEN = os.getenv("CRYPTO_TOKEN")
-ASSET = os.getenv("CRYPTO_ASSET", "USDT")
-CRYPTOTOKEN = os.getenv("CRYPTO_TOKEN")
-CRYPTO_ENABLED = os.getenv("CRYPTO_ENABLED", "1") == "1"
+CRYPTO_ENABLED = os.getenv("CRYPTO_ENABLED", "0") == "1"
 
 # === YooKassa ===
 ACCOUNT_ID = os.getenv("YOOKASSA_ACCOUNT_ID")
@@ -57,5 +55,8 @@ def _require(name: str, value: str | None):
         raise RuntimeError(f"Required env var {name} is not set. Check your .env or environment.")
 
 # Enforce critical variables only if STRICT_ENV enabled
-for _n in ["BOT_TOKEN", "CRYPTO_TOKEN", "YOOKASSA_ACCOUNT_ID", "YOOKASSA_SECRET_KEY"]:
+_required = ["BOT_TOKEN", "YOOKASSA_ACCOUNT_ID", "YOOKASSA_SECRET_KEY"]
+if CRYPTO_ENABLED:
+    _required.append("CRYPTO_TOKEN")
+for _n in _required:
     _require(_n, os.getenv(_n))

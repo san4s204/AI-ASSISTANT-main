@@ -1,27 +1,22 @@
 # hashsss.py
 
 from __future__ import annotations
-from typing import Optional
-import os
+
 import hashlib
-import aiohttp
-import ssl
-import certifi
+
 from dotenv import load_dotenv
 
-from providers.redis_provider import cache_get, cache_setex, delete_by_pattern
 from deepseek import doc
-import logging
-logging.basicConfig(level=logging.INFO)
+from providers.redis_provider import cache_get, cache_setex
+from providers.llm_provider import (
+    LLMResponse,
+    LLMUsage,
+    complete_chat,
+    current_model,
+)
 
 load_dotenv(override=True)
 
-OPEN_ROUTER_API_KEY = os.getenv("OPEN_ROUTER_API_KEY") or os.getenv("OR_API_KEY")
-OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-OPENROUTER_REFERER = os.getenv("OPEN_ROUTER_REFERER")
-OPENROUTER_TITLE = os.getenv("OPEN_ROUTER_TITLE")
-MAX_OUTPUT_TOKENS = int(os.getenv("OPENROUTER_MAX_TOKENS", "1500"))
-MODEL = "openai/gpt-5.4-pro"
 TTL_SECONDS = 3600  # 1 час
 
 
@@ -78,8 +73,8 @@ async def answer(
     doc_id: str,
     owner_id: int | None = None,
     history: list[tuple[str, str]] | None = None,
-    extra_system: str | None = None,   # ✅ добавили
-) -> str:
+    extra_system: str | None = None,
+) -> LLMResponse:
     ans = None
     source_error = None
 
@@ -111,14 +106,16 @@ async def answer(
     cache_key = None
     if not history:
         doc_key = (doc_id or "").strip() or "no-doc"
-        cache_key = f"openrouter:{doc_key}:{sys_hash}:{_md5(text)}"
+        cache_key = f"llm:{doc_key}:{sys_hash}:{_md5(text)}"
         cached = await cache_get(cache_key)
         if cached is not None:
-            return cached
+            return LLMResponse(
+                text=cached,
+                model=current_model(),
+                usage=LLMUsage(),
+                cached=True,
+            )
     # --- конец блока кэша ---
-
-    if not OPEN_ROUTER_API_KEY:
-        raise RuntimeError("OPEN_ROUTER_API_KEY is not set (add it to .env).")
 
     messages = [{"role": "system", "content": system_content}]
 
@@ -132,31 +129,9 @@ async def answer(
 
     messages.append({"role": "user", "content": text})
 
-    payload = {"model": MODEL, "messages": messages, "max_tokens": MAX_OUTPUT_TOKENS}
-    headers = {
-        "Authorization": f"Bearer {OPEN_ROUTER_API_KEY}",
-        "Content-Type": "application/json",
-    }
-    if OPENROUTER_REFERER:
-        headers["HTTP-Referer"] = OPENROUTER_REFERER
-    if OPENROUTER_TITLE:
-        headers["X-Title"] = OPENROUTER_TITLE
-
-    ssl_context = ssl.create_default_context(cafile=certifi.where())
-    timeout = aiohttp.ClientTimeout(total=30)
-    async with aiohttp.ClientSession(timeout=timeout,
-                                     connector=aiohttp.TCPConnector(ssl=ssl_context)) as session:
-        async with session.post(OPENROUTER_URL, json=payload, headers=headers) as resp:
-            data = await resp.json(content_type=None)
-            if resp.status >= 400:
-                hint = " (Invalid key OR missing HTTP-Referer for Project Key)" if resp.status == 401 else ""
-                raise RuntimeError(f"OpenRouter error {resp.status}{hint}: {data}")
-            try:
-                result = data["choices"][0]["message"]["content"]
-            except Exception:
-                raise RuntimeError(f"Unexpected OpenRouter response shape: {data}")
+    result = await complete_chat(messages)
 
     if cache_key:
-        await cache_setex(cache_key, TTL_SECONDS, result)
+        await cache_setex(cache_key, TTL_SECONDS, result.text)
 
     return result
